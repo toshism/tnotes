@@ -12,6 +12,7 @@ import (
 	"github.com/tosh/tnotes/internal/config"
 	"github.com/tosh/tnotes/internal/index"
 	"github.com/tosh/tnotes/internal/note"
+	"github.com/tosh/tnotes/internal/project"
 	"github.com/tosh/tnotes/internal/search"
 )
 
@@ -103,25 +104,6 @@ func NewServer() *Server {
 	}
 }
 
-// resolveNotesDir returns the appropriate notes directory based on path/global flags
-// Priority: path > global > auto-detect (config.NotesDir)
-func resolveNotesDir(path string, global bool) string {
-	if path != "" {
-		if abs, err := filepath.Abs(path); err == nil {
-			return abs
-		}
-		return path
-	}
-	if global {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return config.NotesDir
-		}
-		return filepath.Join(home, "notes")
-	}
-	return config.NotesDir
-}
-
 // Run starts the MCP server loop
 func (s *Server) Run() error {
 	scanner := bufio.NewScanner(s.in)
@@ -177,117 +159,74 @@ func (s *Server) handleInitialize(req *Request) {
 }
 
 func (s *Server) handleToolsList(req *Request) {
-	// Common properties for directory selection
-	dirProps := map[string]Property{
-		"global": {Type: "boolean", Description: "If true, use global ~/notes instead of project notes"},
-		"dir":    {Type: "string", Description: "Explicit path to notes directory (overrides global)"},
-	}
-
 	workflowInfo := `
 
 WORKFLOW:
-- tnotes supports TWO note locations: project-local (./tnotes/) and global (~/notes)
-- Auto-detection: if ./tnotes/.tnotes exists in cwd, uses project notes; otherwise falls back to global
-- For PROJECT notes: first check if initialized. If not, use tnotes_init to create ./tnotes/.tnotes
-- For GLOBAL notes: use 'global: true' parameter
-- To EDIT notes: use the returned 'path' with Read/Edit tools directly
-
-IMPORTANT - When editing notes:
-- Update the 'modified' field in frontmatter to today's date (YYYY-MM-DD format)
-- When adding wikilinks like [[note-id]] in content, ALSO add the note-id to the 'links' array in frontmatter`
+- All notes are stored in a single directory (default ~/tnotes, configurable)
+- Notes are automatically tagged with project:<name> and path:<cwd> on creation
+- Search across all notes by default, or filter by project
+- To EDIT notes: use the returned 'path' with Read/Edit tools directly`
 
 	tools := []Tool{
 		{
-			Name: "tnotes_init",
-			Description: `Initialize a new tnotes directory. Creates the .tnotes folder with an empty index.
-
-USE THIS FIRST when you want to create project-specific notes but ./tnotes/.tnotes doesn't exist yet.
-
-Without arguments: initializes ./tnotes/ in current working directory (for project notes).
-With 'dir': initializes the specified directory.
-With 'global: true': initializes ~/notes (usually already exists).` + workflowInfo,
+			Name:        "tnotes_init",
+			Description: "Initialize the tnotes directory. Creates the .tnotes folder with an empty index." + workflowInfo,
 			InputSchema: InputSchema{
-				Type:       "object",
-				Properties: dirProps,
+				Type: "object",
 			},
 		},
 		{
-			Name: "tnotes_list",
-			Description: `List all notes in the notes directory.
-
-Returns JSON array with id, title, tags, and absolute file path for each note.
-
-If no project notes exist (./tnotes/.tnotes), falls back to global ~/notes.
-Use 'global: true' to explicitly list global notes.` + workflowInfo,
-			InputSchema: InputSchema{
-				Type:       "object",
-				Properties: dirProps,
-			},
-		},
-		{
-			Name: "tnotes_search",
-			Description: `Search notes by text (title + content) and/or tags.
-
-Returns matching notes with id, title, tags, and absolute file path.` + workflowInfo,
+			Name:        "tnotes_list",
+			Description: "List all notes. Returns JSON array with id, title, tags, and absolute file path for each note. Use 'project' to filter by project tag." + workflowInfo,
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"query":  {Type: "string", Description: "Text to search for in title and content"},
-					"tag":    {Type: "string", Description: "Filter by tag (exact match)"},
-					"global": {Type: "boolean", Description: "If true, use global ~/notes instead of project notes"},
-					"dir":    {Type: "string", Description: "Explicit path to notes directory (overrides global)"},
+					"project": {Type: "string", Description: "Filter notes by project name"},
 				},
 			},
 		},
 		{
-			Name: "tnotes_show",
-			Description: `Get the full content of a note by ID.
-
-Returns note metadata and full content. Use the 'path' field with Read/Edit tools to modify.` + workflowInfo,
+			Name:        "tnotes_search",
+			Description: "Search notes by text (title + content) and/or tags. Returns matching notes with id, title, tags, and absolute file path." + workflowInfo,
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
-					"id":     {Type: "string", Description: "The note ID"},
-					"global": {Type: "boolean", Description: "If true, search in global ~/notes"},
-					"dir":    {Type: "string", Description: "Explicit path to notes directory"},
+					"query":   {Type: "string", Description: "Text to search for in title and content"},
+					"tag":     {Type: "string", Description: "Filter by tag (exact match)"},
+					"project": {Type: "string", Description: "Filter by project name"},
+				},
+			},
+		},
+		{
+			Name:        "tnotes_show",
+			Description: "Get the full content of a note by ID. Returns note metadata and full content. Use the 'path' field with Read/Edit tools to modify." + workflowInfo,
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"id": {Type: "string", Description: "The note ID"},
 				},
 				Required: []string{"id"},
 			},
 		},
 		{
 			Name: "tnotes_add",
-			Description: `Create a new note with the given title and optional tags.
-
-Returns the new note's ID and absolute path.
-
-USE 'project: true' when user wants a project-level note. This will:
-1. Auto-initialize ./tnotes/.tnotes if it doesn't exist
-2. Create the note in project notes (./tnotes/)
-
-USE 'global: true' when user wants a global note (~/notes).
-
-If neither is specified, auto-detects (project if exists, else global).` + workflowInfo,
+			Description: `Create a new note with the given title and optional tags. Notes are automatically tagged with project:<name> and path:<cwd>. Returns the new note's ID, absolute path, and resolved project info.` + workflowInfo,
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
 					"title":   {Type: "string", Description: "The note title"},
 					"tags":    {Type: "string", Description: "Comma-separated list of tags"},
 					"content": {Type: "string", Description: "Initial content for the note body"},
-					"project": {Type: "boolean", Description: "If true, create as PROJECT note (auto-initializes ./tnotes/ if needed)"},
-					"global":  {Type: "boolean", Description: "If true, create in global ~/notes"},
-					"dir":     {Type: "string", Description: "Explicit path to notes directory"},
+					"project": {Type: "string", Description: "Project name to associate with this note. If empty, auto-detected from .tnotes-project file, git remote, or directory name."},
 				},
 				Required: []string{"title"},
 			},
 		},
 		{
-			Name: "tnotes_index",
-			Description: `Rebuild the index from all markdown files in the notes directory.
-
-Run this after manually editing/adding/deleting note files to update the search index.` + workflowInfo,
+			Name:        "tnotes_index",
+			Description: "Rebuild the index from all markdown files in the notes directory. Run this after manually editing/adding/deleting note files to update the search index." + workflowInfo,
 			InputSchema: InputSchema{
-				Type:       "object",
-				Properties: dirProps,
+				Type: "object",
 			},
 		},
 	}
@@ -302,23 +241,21 @@ func (s *Server) handleToolsCall(req *Request) {
 		return
 	}
 
-	// Extract common dir params
-	global, _ := params.Arguments["global"].(bool)
-	dir, _ := params.Arguments["dir"].(string)
-	notesDir := resolveNotesDir(dir, global)
-
+	notesDir := config.NotesDir
 	var result string
 	var isError bool
 
 	switch params.Name {
 	case "tnotes_init":
-		result, isError = s.toolInit(notesDir, global, dir)
+		result, isError = s.toolInit(notesDir)
 	case "tnotes_list":
-		result, isError = s.toolList(notesDir)
+		projectFilter, _ := params.Arguments["project"].(string)
+		result, isError = s.toolList(notesDir, projectFilter)
 	case "tnotes_search":
 		query, _ := params.Arguments["query"].(string)
 		tag, _ := params.Arguments["tag"].(string)
-		result, isError = s.toolSearch(notesDir, query, tag)
+		projectFilter, _ := params.Arguments["project"].(string)
+		result, isError = s.toolSearch(notesDir, query, tag, projectFilter)
 	case "tnotes_show":
 		id, _ := params.Arguments["id"].(string)
 		result, isError = s.toolShow(notesDir, id)
@@ -326,8 +263,8 @@ func (s *Server) handleToolsCall(req *Request) {
 		title, _ := params.Arguments["title"].(string)
 		tags, _ := params.Arguments["tags"].(string)
 		content, _ := params.Arguments["content"].(string)
-		project, _ := params.Arguments["project"].(bool)
-		result, isError = s.toolAdd(notesDir, title, tags, content, project, global, dir)
+		projectParam, _ := params.Arguments["project"].(string)
+		result, isError = s.toolAdd(notesDir, title, tags, content, projectParam)
 	case "tnotes_index":
 		result, isError = s.toolIndex(notesDir)
 	default:
@@ -341,27 +278,8 @@ func (s *Server) handleToolsCall(req *Request) {
 	})
 }
 
-func (s *Server) toolInit(notesDir string, global bool, explicitDir string) (string, bool) {
-	// Determine the target directory
-	var targetDir string
-	if explicitDir != "" {
-		targetDir = explicitDir
-	} else if global {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Sprintf("Failed to get home directory: %v", err), true
-		}
-		targetDir = filepath.Join(home, "notes")
-	} else {
-		// Default: create ./tnotes in current working directory
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Sprintf("Failed to get working directory: %v", err), true
-		}
-		targetDir = filepath.Join(cwd, "tnotes")
-	}
-
-	absDir, err := filepath.Abs(targetDir)
+func (s *Server) toolInit(notesDir string) (string, bool) {
+	absDir, err := filepath.Abs(notesDir)
 	if err != nil {
 		return fmt.Sprintf("Failed to resolve path: %v", err), true
 	}
@@ -369,23 +287,20 @@ func (s *Server) toolInit(notesDir string, global bool, explicitDir string) (str
 	tnotesDir := filepath.Join(absDir, ".tnotes")
 	indexFile := filepath.Join(tnotesDir, "index.json")
 
-	// Check if already initialized
 	if _, err := os.Stat(indexFile); err == nil {
 		out := map[string]interface{}{
 			"status":  "already_initialized",
 			"path":    absDir,
-			"message": "Project notes already initialized at this location",
+			"message": "Notes directory already initialized",
 		}
 		data, _ := json.MarshalIndent(out, "", "  ")
 		return string(data), false
 	}
 
-	// Create directory structure
 	if err := os.MkdirAll(tnotesDir, 0755); err != nil {
 		return fmt.Sprintf("Failed to create directory: %v", err), true
 	}
 
-	// Create empty index
 	emptyIndex := &index.Index{Entries: []note.IndexEntry{}}
 	if err := saveIndexTo(emptyIndex, indexFile); err != nil {
 		return fmt.Sprintf("Failed to create index: %v", err), true
@@ -400,18 +315,33 @@ func (s *Server) toolInit(notesDir string, global bool, explicitDir string) (str
 	return string(data), false
 }
 
-func (s *Server) toolList(notesDir string) (string, bool) {
+func (s *Server) toolList(notesDir, projectFilter string) (string, bool) {
 	indexFile := filepath.Join(notesDir, ".tnotes", "index.json")
 	idx, err := loadIndexFrom(indexFile)
 	if err != nil {
 		return fmt.Sprintf("Failed to load index: %v", err), true
 	}
 
-	data, _ := json.MarshalIndent(idx.Entries, "", "  ")
+	entries := idx.Entries
+	if projectFilter != "" {
+		var filtered []note.IndexEntry
+		projectTag := "project:" + projectFilter
+		for _, e := range entries {
+			for _, t := range e.Tags {
+				if t == projectTag {
+					filtered = append(filtered, e)
+					break
+				}
+			}
+		}
+		entries = filtered
+	}
+
+	data, _ := json.MarshalIndent(entries, "", "  ")
 	return string(data), false
 }
 
-func (s *Server) toolSearch(notesDir, query, tag string) (string, bool) {
+func (s *Server) toolSearch(notesDir, query, tag, projectFilter string) (string, bool) {
 	indexFile := filepath.Join(notesDir, ".tnotes", "index.json")
 	idx, err := loadIndexFrom(indexFile)
 	if err != nil {
@@ -421,6 +351,9 @@ func (s *Server) toolSearch(notesDir, query, tag string) (string, bool) {
 	q := search.Query{Text: query}
 	if tag != "" {
 		q.Tags = []string{tag}
+	}
+	if projectFilter != "" {
+		q.Tags = append(q.Tags, "project:"+projectFilter)
 	}
 
 	results, err := search.Search(idx, q)
@@ -476,34 +409,21 @@ func (s *Server) toolShow(notesDir, id string) (string, bool) {
 	return string(data), false
 }
 
-func (s *Server) toolAdd(notesDir, title, tags, content string, project, global bool, explicitDir string) (string, bool) {
+func (s *Server) toolAdd(notesDir, title, tags, content, projectParam string) (string, bool) {
 	if title == "" {
 		return "Title is required", true
 	}
 
-	// Handle project flag - auto-initialize if needed
-	targetDir := notesDir
-	if project && explicitDir == "" && !global {
-		// User explicitly wants a project note
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Sprintf("Failed to get working directory: %v", err), true
-		}
-		projectDir := filepath.Join(cwd, "tnotes")
-		tnotesIndex := filepath.Join(projectDir, ".tnotes", "index.json")
+	// Resolve project and path
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Sprintf("Failed to get working directory: %v", err), true
+	}
 
-		// Auto-initialize if not exists
-		if _, err := os.Stat(tnotesIndex); os.IsNotExist(err) {
-			tnotesDir := filepath.Join(projectDir, ".tnotes")
-			if err := os.MkdirAll(tnotesDir, 0755); err != nil {
-				return fmt.Sprintf("Failed to create project notes directory: %v", err), true
-			}
-			emptyIndex := &index.Index{Entries: []note.IndexEntry{}}
-			if err := saveIndexTo(emptyIndex, tnotesIndex); err != nil {
-				return fmt.Sprintf("Failed to initialize project notes: %v", err), true
-			}
-		}
-		targetDir = projectDir
+	projectName := projectParam
+	if projectName == "" {
+		info := project.Resolve(cwd)
+		projectName = info.Project
 	}
 
 	var tagList []string
@@ -515,9 +435,12 @@ func (s *Server) toolAdd(notesDir, title, tags, content string, project, global 
 		}
 	}
 
+	// Add project and path tags
+	tagList = append(tagList, "project:"+projectName, "path:"+cwd)
+
 	n := note.NewNote(title, tagList)
 	filename := n.Filename()
-	absDir, _ := filepath.Abs(targetDir)
+	absDir, _ := filepath.Abs(notesDir)
 	filePath := filepath.Join(absDir, filename)
 
 	noteContent := n.ToMarkdown(content)
@@ -526,10 +449,9 @@ func (s *Server) toolAdd(notesDir, title, tags, content string, project, global 
 	}
 
 	n.Path = filePath
-	indexFile := filepath.Join(targetDir, ".tnotes", "index.json")
+	indexFile := filepath.Join(notesDir, ".tnotes", "index.json")
 	idx, err := loadIndexFrom(indexFile)
 	if err != nil {
-		// Create new index if it doesn't exist
 		idx = &index.Index{Entries: []note.IndexEntry{}}
 	}
 
@@ -538,19 +460,13 @@ func (s *Server) toolAdd(notesDir, title, tags, content string, project, global 
 		return fmt.Sprintf("Failed to save index: %v", err), true
 	}
 
-	location := "auto-detected"
-	if project {
-		location = "project"
-	} else if global {
-		location = "global"
-	}
-
 	out := map[string]interface{}{
-		"id":       n.ID,
-		"title":    n.Title,
-		"path":     filePath,
-		"tags":     n.Tags,
-		"location": location,
+		"id":      n.ID,
+		"title":   n.Title,
+		"path":    filePath,
+		"tags":    n.Tags,
+		"project": projectName,
+		"cwd":     cwd,
 	}
 
 	data, _ := json.MarshalIndent(out, "", "  ")
