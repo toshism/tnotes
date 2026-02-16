@@ -11,7 +11,7 @@ var (
 	NotesDir string
 )
 
-func Init(cfgFile, notesDir string, global bool) {
+func Init(cfgFile, notesDir string) {
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
@@ -30,49 +30,24 @@ func Init(cfgFile, notesDir string, global bool) {
 
 	_ = viper.ReadInConfig()
 
-	// Priority: CLI flag > global flag > env var > auto-detect > default
+	// Priority: explicit dir > env var > config file default
 	if notesDir != "" {
 		NotesDir = notesDir
-	} else if global {
-		NotesDir = defaultNotesDir()
 	} else if envDir := os.Getenv("TNOTES_DIR"); envDir != "" {
 		NotesDir = envDir
-	} else if projectDir := detectProjectNotes(); projectDir != "" {
-		NotesDir = projectDir
 	} else {
 		NotesDir = viper.GetString("notes_dir")
 	}
 
-	// Expand ~ in path
 	NotesDir = expandPath(NotesDir)
 }
 
 func defaultNotesDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "./notes"
+		return "./tnotes"
 	}
-	return filepath.Join(home, "notes")
-}
-
-// detectProjectNotes checks for project-local notes directory
-// Returns absolute path if found, empty string otherwise
-func detectProjectNotes() string {
-	// Check for ./tnotes/.tnotes (tnotes subdirectory)
-	if info, err := os.Stat("./tnotes/.tnotes"); err == nil && info.IsDir() {
-		if abs, err := filepath.Abs("./tnotes"); err == nil {
-			return abs
-		}
-	}
-
-	// Check for ./.tnotes (notes in current directory)
-	if info, err := os.Stat("./.tnotes"); err == nil && info.IsDir() {
-		if abs, err := filepath.Abs("."); err == nil {
-			return abs
-		}
-	}
-
-	return ""
+	return filepath.Join(home, "tnotes")
 }
 
 func expandPath(path string) string {
