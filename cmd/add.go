@@ -11,9 +11,13 @@ import (
 	"github.com/tosh/tnotes/internal/config"
 	"github.com/tosh/tnotes/internal/index"
 	"github.com/tosh/tnotes/internal/note"
+	"github.com/tosh/tnotes/internal/project"
 )
 
-var addTags string
+var (
+	addTags    string
+	addProject string
+)
 
 var addCmd = &cobra.Command{
 	Use:   "add [title]",
@@ -33,6 +37,20 @@ var addCmd = &cobra.Command{
 				}
 			}
 		}
+
+		// Resolve project and path
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get working directory: %w", err)
+		}
+
+		projectName := addProject
+		if projectName == "" {
+			info := project.Resolve(cwd)
+			projectName = info.Project
+		}
+
+		tags = append(tags, "project:"+projectName, "path:"+cwd)
 
 		// Create new note
 		n := note.NewNote(title, tags)
@@ -59,10 +77,12 @@ var addCmd = &cobra.Command{
 
 		if jsonOutput {
 			out := map[string]interface{}{
-				"id":    n.ID,
-				"title": n.Title,
-				"path":  filePath,
-				"tags":  n.Tags,
+				"id":      n.ID,
+				"title":   n.Title,
+				"path":    filePath,
+				"tags":    n.Tags,
+				"project": projectName,
+				"cwd":     cwd,
 			}
 			data, _ := json.MarshalIndent(out, "", "  ")
 			fmt.Println(string(data))
@@ -78,4 +98,5 @@ var addCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(addCmd)
 	addCmd.Flags().StringVarP(&addTags, "tags", "t", "", "comma-separated list of tags")
+	addCmd.Flags().StringVarP(&addProject, "project", "p", "", "project name (auto-detected if not provided)")
 }

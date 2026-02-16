@@ -9,10 +9,9 @@ import (
 )
 
 var (
-	cfgFile     string
-	notesDir    string
-	jsonOutput  bool
-	globalNotes bool
+	cfgFile    string
+	notesDir   string
+	jsonOutput bool
 )
 
 var rootCmd = &cobra.Command{
@@ -36,11 +35,10 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/tnotes/config.toml)")
-	rootCmd.PersistentFlags().StringVar(&notesDir, "dir", "", "notes directory (default is ~/notes or $TNOTES_DIR)")
+	rootCmd.PersistentFlags().StringVar(&notesDir, "dir", "", "notes directory (default is ~/tnotes or $TNOTES_DIR)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
-	rootCmd.PersistentFlags().BoolVarP(&globalNotes, "global", "g", false, "use global ~/notes directory (skip auto-detection)")
 }
 
 func initConfig() {
-	config.Init(cfgFile, notesDir, globalNotes)
+	config.Init(cfgFile, notesDir)
 }
