@@ -4,8 +4,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tosh/tnotes/internal/index"
-	"github.com/tosh/tnotes/internal/note"
+	"github.com/toshism/tnotes/internal/index"
+	"github.com/toshism/tnotes/internal/note"
 )
 
 // Query represents search parameters

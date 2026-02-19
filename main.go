@@ -1,6 +1,6 @@
 package main
 
-import "github.com/tosh/tnotes/cmd"
+import "github.com/toshism/tnotes/cmd"
 
 func main() {
 	cmd.Execute()

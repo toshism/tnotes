@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tosh/tnotes/internal/config"
-	"github.com/tosh/tnotes/internal/note"
+	"github.com/toshism/tnotes/internal/config"
+	"github.com/toshism/tnotes/internal/note"
 )
 
 // Index holds all note entries for fast lookup

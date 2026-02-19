@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tosh/tnotes/internal/index"
-	"github.com/tosh/tnotes/internal/search"
+	"github.com/toshism/tnotes/internal/index"
+	"github.com/toshism/tnotes/internal/search"
 )
 
 var searchTag string

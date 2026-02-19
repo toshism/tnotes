@@ -5,9 +5,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/tosh/tnotes/internal/config"
-	"github.com/tosh/tnotes/internal/index"
-	"github.com/tosh/tnotes/internal/note"
+	"github.com/toshism/tnotes/internal/config"
+	"github.com/toshism/tnotes/internal/index"
+	"github.com/toshism/tnotes/internal/note"
 )
 
 var initCmd = &cobra.Command{

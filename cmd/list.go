@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tosh/tnotes/internal/index"
+	"github.com/toshism/tnotes/internal/index"
 )
 
 var listCmd = &cobra.Command{

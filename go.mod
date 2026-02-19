@@ -1,4 +1,4 @@
-module github.com/tosh/tnotes
+module github.com/toshism/tnotes
 
 go 1.21
 

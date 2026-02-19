@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/tosh/tnotes/internal/index"
+	"github.com/toshism/tnotes/internal/index"
 )
 
 var indexCmd = &cobra.Command{

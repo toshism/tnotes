@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/tosh/tnotes/internal/mcp"
+	"github.com/toshism/tnotes/internal/mcp"
 )
 
 var mcpCmd = &cobra.Command{
