@@ -177,7 +177,7 @@ WORKFLOW:
 		},
 		{
 			Name:        "tnotes_list",
-			Description: "List all notes. Returns JSON array with id, title, tags, and absolute file path for each note. Use 'project' to filter by project tag." + workflowInfo,
+			Description: "List all notes. Returns JSON array with id, title, tags, and absolute file path for each note. Use 'project' to filter by project tag.\n\nWARNING: Without a project filter this can return a very large result. Prefer using 'project' to filter, or use tnotes_search to find specific notes." + workflowInfo,
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]Property{
@@ -217,6 +217,7 @@ WORKFLOW:
 					"title":   {Type: "string", Description: "The note title"},
 					"tags":    {Type: "string", Description: "Comma-separated list of tags"},
 					"content": {Type: "string", Description: "Initial content for the note body"},
+					"links":   {Type: "string", Description: "Comma-separated filenames of related notes (e.g. '20260218143022-my-note.md, 20260217120000-other-note.md')"},
 					"project": {Type: "string", Description: "Project name to associate with this note. If empty, auto-detected from .tnotes-project file, git remote, or directory name."},
 				},
 				Required: []string{"title"},
@@ -263,8 +264,9 @@ func (s *Server) handleToolsCall(req *Request) {
 		title, _ := params.Arguments["title"].(string)
 		tags, _ := params.Arguments["tags"].(string)
 		content, _ := params.Arguments["content"].(string)
+		links, _ := params.Arguments["links"].(string)
 		projectParam, _ := params.Arguments["project"].(string)
-		result, isError = s.toolAdd(notesDir, title, tags, content, projectParam)
+		result, isError = s.toolAdd(notesDir, title, tags, content, links, projectParam)
 	case "tnotes_index":
 		result, isError = s.toolIndex(notesDir)
 	default:
@@ -409,7 +411,7 @@ func (s *Server) toolShow(notesDir, id string) (string, bool) {
 	return string(data), false
 }
 
-func (s *Server) toolAdd(notesDir, title, tags, content, projectParam string) (string, bool) {
+func (s *Server) toolAdd(notesDir, title, tags, content, links, projectParam string) (string, bool) {
 	if title == "" {
 		return "Title is required", true
 	}
@@ -439,6 +441,15 @@ func (s *Server) toolAdd(notesDir, title, tags, content, projectParam string) (s
 	tagList = append(tagList, "project:"+projectName, "path:"+cwd)
 
 	n := note.NewNote(title, tagList)
+
+	if links != "" {
+		for _, l := range splitAndTrim(links, ",") {
+			if l != "" {
+				n.Links = append(n.Links, l)
+			}
+		}
+	}
+
 	filename := n.Filename()
 	absDir, _ := filepath.Abs(notesDir)
 	filePath := filepath.Join(absDir, filename)

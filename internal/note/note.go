@@ -89,7 +89,10 @@ func (n *Note) ToMarkdown(content string) string {
 	sb.WriteString(fmt.Sprintf("modified: %q\n", n.Modified))
 	sb.WriteString("---\n\n")
 
-	sb.WriteString(fmt.Sprintf("# %s\n\n", n.Title))
+	// Only add heading if content doesn't already start with one
+	if !strings.HasPrefix(content, "# ") {
+		sb.WriteString(fmt.Sprintf("# %s\n\n", n.Title))
+	}
 
 	if content != "" {
 		sb.WriteString(content)
