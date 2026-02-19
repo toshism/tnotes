@@ -133,6 +133,19 @@ When creating notes, tnotes automatically tags them with the current project. It
 2. Git remote origin (normalized to `org/repo`)
 3. Current directory basename
 
+## CLAUDE.md integration
+
+Add tnotes to your `CLAUDE.md` so Claude uses it for working notes:
+
+```markdown
+## Document Creation
+
+- **Prefer tnotes** for drafts, research documents, review documents, and working notes
+  unless the output has a specific designated location.
+- Use the `project` parameter to tag notes with the relevant project name.
+- Omit `project` to let tnotes auto-detect from `.tnotes-project`, git remote, or directory name.
+```
+
 ## CLI reference
 
 | Command | Description |
