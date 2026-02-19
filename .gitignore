@@ -1,4 +1,4 @@
-tnotes/
+/tnotes/
 cmd/migrate.go
 docs/plans/
 .claude/
