@@ -198,6 +198,7 @@ WORKFLOW:
 					"query":   {Type: "string", Description: "Text to search for in title and content"},
 					"tag":     {Type: "string", Description: "Filter by tag (exact match)"},
 					"project": {Type: "string", Description: "Filter by project name"},
+					"limit":   {Type: "integer", Description: "Maximum number of results (default 10, 0 means unlimited)"},
 				},
 			},
 		},
@@ -213,7 +214,7 @@ WORKFLOW:
 			},
 		},
 		{
-			Name: "tnotes_add",
+			Name:        "tnotes_add",
 			Description: `Create a new note with the given title and optional tags. Notes are automatically tagged with project:<name> and path:<cwd>. Returns the new note's ID, absolute path, and resolved project info.` + workflowInfo,
 			InputSchema: InputSchema{
 				Type: "object",
@@ -260,7 +261,16 @@ func (s *Server) handleToolsCall(req *Request) {
 		query, _ := params.Arguments["query"].(string)
 		tag, _ := params.Arguments["tag"].(string)
 		projectFilter, _ := params.Arguments["project"].(string)
-		result, isError = s.toolSearch(notesDir, query, tag, projectFilter)
+		limit := 10
+		if rawLimit, ok := params.Arguments["limit"]; ok {
+			switch v := rawLimit.(type) {
+			case float64:
+				limit = int(v)
+			case int:
+				limit = v
+			}
+		}
+		result, isError = s.toolSearch(notesDir, query, tag, projectFilter, limit)
 	case "tnotes_show":
 		id, _ := params.Arguments["id"].(string)
 		result, isError = s.toolShow(notesDir, id)
@@ -322,7 +332,7 @@ func (s *Server) toolInit(notesDir string) (string, bool) {
 }
 
 func (s *Server) toolList(notesDir, projectFilter string) (string, bool) {
-	indexFile := filepath.Join(notesDir, ".tnotes", "index.json")
+	indexFile := config.IndexFileFor(notesDir)
 	idx, err := loadIndexFrom(indexFile)
 	if err != nil {
 		return fmt.Sprintf("Failed to load index: %v", err), true
@@ -347,14 +357,14 @@ func (s *Server) toolList(notesDir, projectFilter string) (string, bool) {
 	return string(data), false
 }
 
-func (s *Server) toolSearch(notesDir, query, tag, projectFilter string) (string, bool) {
-	indexFile := filepath.Join(notesDir, ".tnotes", "index.json")
+func (s *Server) toolSearch(notesDir, query, tag, projectFilter string, limit int) (string, bool) {
+	indexFile := config.IndexFileFor(notesDir)
 	idx, err := loadIndexFrom(indexFile)
 	if err != nil {
 		return fmt.Sprintf("Failed to load index: %v", err), true
 	}
 
-	q := search.Query{Text: query}
+	q := search.Query{Text: query, Limit: limit, Snippets: true}
 	if tag != "" {
 		q.Tags = []string{tag}
 	}
@@ -362,7 +372,7 @@ func (s *Server) toolSearch(notesDir, query, tag, projectFilter string) (string,
 		q.Tags = append(q.Tags, "project:"+projectFilter)
 	}
 
-	results, err := search.Search(idx, q)
+	results, err := search.SearchWithIndexPath(idx, q, config.BleveIndexDirFor(notesDir))
 	if err != nil {
 		return fmt.Sprintf("Search failed: %v", err), true
 	}
@@ -376,7 +386,7 @@ func (s *Server) toolShow(notesDir, id string) (string, bool) {
 		return "ID is required", true
 	}
 
-	indexFile := filepath.Join(notesDir, ".tnotes", "index.json")
+	indexFile := config.IndexFileFor(notesDir)
 	idx, _ := loadIndexFrom(indexFile)
 	var filePath string
 
@@ -464,7 +474,7 @@ func (s *Server) toolAdd(notesDir, title, tags, content, links, projectParam str
 	}
 
 	n.Path = filePath
-	indexFile := filepath.Join(notesDir, ".tnotes", "index.json")
+	indexFile := config.IndexFileFor(notesDir)
 	idx, err := loadIndexFrom(indexFile)
 	if err != nil {
 		idx = &index.Index{Entries: []note.IndexEntry{}}
@@ -473,6 +483,9 @@ func (s *Server) toolAdd(notesDir, title, tags, content, links, projectParam str
 	idx.AddEntry(n.ToIndexEntry())
 	if err := saveIndexTo(idx, indexFile); err != nil {
 		return fmt.Sprintf("Failed to save index: %v", err), true
+	}
+	if err := search.IndexEntryWithIndexAt(idx, n.ToIndexEntry(), config.BleveIndexDirFor(notesDir)); err != nil {
+		return fmt.Sprintf("Failed to update search index: %v", err), true
 	}
 
 	out := map[string]interface{}{
@@ -494,9 +507,12 @@ func (s *Server) toolIndex(notesDir string) (string, bool) {
 		return fmt.Sprintf("Failed to rebuild index: %v", err), true
 	}
 
-	indexFile := filepath.Join(notesDir, ".tnotes", "index.json")
+	indexFile := config.IndexFileFor(notesDir)
 	if err := saveIndexTo(idx, indexFile); err != nil {
 		return fmt.Sprintf("Failed to save index: %v", err), true
+	}
+	if err := search.RebuildBleveAt(idx, config.BleveIndexDirFor(notesDir)); err != nil {
+		return fmt.Sprintf("Failed to rebuild search index: %v", err), true
 	}
 
 	out := map[string]interface{}{
@@ -540,14 +556,11 @@ func saveIndexTo(idx *index.Index, indexFile string) error {
 
 // rebuildIndexFor rebuilds the index for a specific notes directory
 func rebuildIndexFor(notesDir string) (*index.Index, error) {
-	absDir, err := filepath.Abs(notesDir)
-	if err != nil {
-		return nil, err
-	}
+	absDir := config.ResolvedNotesDirFor(notesDir)
 
 	idx := &index.Index{Entries: []note.IndexEntry{}}
 
-	err = filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}

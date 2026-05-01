@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/toshism/tnotes/internal/index"
+	"github.com/toshism/tnotes/internal/search"
 )
 
 var indexCmd = &cobra.Command{
@@ -20,6 +21,9 @@ var indexCmd = &cobra.Command{
 
 		if err := idx.Save(); err != nil {
 			return fmt.Errorf("failed to save index: %w", err)
+		}
+		if err := search.RebuildBleve(idx); err != nil {
+			return fmt.Errorf("failed to rebuild search index: %w", err)
 		}
 
 		if jsonOutput {

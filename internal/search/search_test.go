@@ -1,132 +1,237 @@
 package search
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/toshism/tnotes/internal/index"
 	"github.com/toshism/tnotes/internal/note"
 )
 
-func TestSearch(t *testing.T) {
-	idx := testIndex(t)
+func TestBleveSearch(t *testing.T) {
+	dir := t.TempDir()
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "landing", "Moon landing policy", []string{"project:space", "topic:mission"}, "The lander touched down safely during the mission."),
+		testEntry(t, dir, "policy", "Policy background", []string{"project:space"}, "A moon lander needs a careful operations plan."),
+		testEntry(t, dir, "phrase", "Phrase note", []string{"project:space"}, "This note contains the exact lander policy phrase."),
+		testEntry(t, dir, "other", "Other note", []string{"project:other", "topic:archive"}, "The mission excluded this policy."),
+		testEntry(t, dir, "required", "Required title", []string{"foo"}, "required useful text"),
+		testEntry(t, dir, "excluded", "Excluded title", []string{"bar"}, "required excluded text"),
+		testEntry(t, dir, "prefixed", "Prefixed note", []string{"project:foo"}, "prefixed text"),
+	}}
+	indexPath := filepath.Join(dir, ".tnotes", "bleve")
 
 	tests := []struct {
-		name        string
-		query       Query
-		wantIDs     []string
-		wantMatches map[string][]string
+		name    string
+		query   Query
+		wantIDs []string
 	}{
 		{
-			name:    "tag-only returns all entries matching tag",
-			query:   Query{Tags: []string{"project:TeamTosh"}},
-			wantIDs: []string{"team-title", "team-content", "team-tag-only"},
-			wantMatches: map[string][]string{
-				"team-title":    {"tag"},
-				"team-content":  {"tag"},
-				"team-tag-only": {"tag"},
-			},
+			name:    "single word hits stemmed variants",
+			query:   Query{Text: "land", Limit: 0},
+			wantIDs: []string{"landing", "policy", "phrase"},
 		},
 		{
-			name:    "text-only returns title or content matches",
-			query:   Query{Text: "shared text needle"},
-			wantIDs: []string{"team-title", "team-content"},
-			wantMatches: map[string][]string{
-				"team-title":   {"title"},
-				"team-content": {"content"},
-			},
+			name:    "multi-word query uses word AND semantics",
+			query:   Query{Text: "lander policy", Limit: 0},
+			wantIDs: []string{"landing", "policy", "phrase"},
 		},
 		{
-			name:    "tag and text returns entry when both match",
-			query:   Query{Text: "shared text needle title", Tags: []string{"project:TeamTosh"}},
-			wantIDs: []string{"team-title"},
-			wantMatches: map[string][]string{
-				"team-title": {"tag", "title"},
-			},
+			name:    "phrase query requires exact phrase",
+			query:   Query{Text: `"lander policy"`, Limit: 0},
+			wantIDs: []string{"phrase"},
 		},
 		{
-			name:        "tag and text returns nothing when only tag matches",
-			query:       Query{Text: "nonexistent gibberish", Tags: []string{"project:TeamTosh"}},
-			wantIDs:     []string{},
-			wantMatches: map[string][]string{},
+			name:    "mixed phrase and word query uses AND semantics",
+			query:   Query{Text: `"lander policy" exact`, Limit: 0},
+			wantIDs: []string{"phrase"},
 		},
 		{
-			name:        "tag and text returns nothing when only text matches",
-			query:       Query{Text: "other tag needle", Tags: []string{"project:TeamTosh"}},
-			wantIDs:     []string{},
-			wantMatches: map[string][]string{},
+			name:    "tag filter alone returns all matching notes",
+			query:   Query{Tags: []string{"project:space"}, Limit: 0},
+			wantIDs: []string{"landing", "policy", "phrase"},
 		},
 		{
-			name:    "no filters returns everything",
-			query:   Query{},
-			wantIDs: []string{"team-title", "team-content", "team-tag-only", "other-text", "case-entry"},
-			wantMatches: map[string][]string{
-				"team-title":    {"all"},
-				"team-content":  {"all"},
-				"team-tag-only": {"all"},
-				"other-text":    {"all"},
-				"case-entry":    {"all"},
-			},
+			name:    "tag and text use AND semantics",
+			query:   Query{Text: "mission", Tags: []string{"project:space"}, Limit: 0},
+			wantIDs: []string{"landing"},
 		},
 		{
-			name:    "tag and text matching is case-insensitive",
-			query:   Query{Text: "mixed case text", Tags: []string{"project:case"}},
-			wantIDs: []string{"case-entry"},
-			wantMatches: map[string][]string{
-				"case-entry": {"tag", "title"},
-			},
+			name:    "boolean required and excluded operators",
+			query:   Query{Text: "+required -excluded", Limit: 0},
+			wantIDs: []string{"required"},
+		},
+		{
+			name:    "boolean OR over tag field alias uses exact tag values",
+			query:   Query{Text: "tag:foo OR tag:bar", Limit: 0},
+			wantIDs: []string{"required", "excluded"},
+		},
+		{
+			name:    "negative tag alias with colon-containing value",
+			query:   Query{Text: "+lander -tag:project:other", Limit: 0},
+			wantIDs: []string{"landing", "policy", "phrase"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Search(idx, tt.query)
+			got, err := SearchWithIndexPath(idx, tt.query, indexPath)
 			if err != nil {
 				t.Fatal(err)
 			}
-
-			if gotIDs := resultIDs(got); !reflect.DeepEqual(gotIDs, tt.wantIDs) {
-				t.Errorf("Search() IDs = %v, want %v", gotIDs, tt.wantIDs)
+			gotIDs := resultIDs(got)
+			if tt.name == "multi-word query uses word AND semantics" || tt.name == "single word hits stemmed variants" || tt.name == "boolean OR over tag field alias uses exact tag values" || tt.name == "negative tag alias with colon-containing value" {
+				assertSameIDs(t, gotIDs, tt.wantIDs)
+				return
 			}
-
-			gotMatches := resultMatches(got)
-			if !reflect.DeepEqual(gotMatches, tt.wantMatches) {
-				t.Errorf("Search() matches = %v, want %v", gotMatches, tt.wantMatches)
+			if !reflect.DeepEqual(gotIDs, tt.wantIDs) {
+				t.Fatalf("Search() IDs = %v, want %v", gotIDs, tt.wantIDs)
 			}
 		})
 	}
 }
 
-func testIndex(t *testing.T) *index.Index {
-	t.Helper()
-
+func TestTitleOnlyStemmedVariantMatches(t *testing.T) {
 	dir := t.TempDir()
-	entries := []note.IndexEntry{
-		testEntry(t, dir, "team-title", "Shared Text Needle Title", []string{"project:TeamTosh"}, "no relevant body"),
-		testEntry(t, dir, "team-content", "Content Note", []string{"project:TeamTosh"}, "body has shared text needle"),
-		testEntry(t, dir, "team-tag-only", "Plain Team Note", []string{"project:TeamTosh"}, "plain body"),
-		testEntry(t, dir, "other-text", "Other Tag Needle", []string{"project:Other"}, "plain body"),
-		testEntry(t, dir, "case-entry", "Mixed Case Text", []string{"Project:Case"}, "plain body"),
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "title-only", "Lander", nil, "no matching body text"),
+	}}
+
+	got, err := SearchWithIndexPath(idx, Query{Text: "land"}, filepath.Join(dir, ".tnotes", "bleve"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotIDs := resultIDs(got); !reflect.DeepEqual(gotIDs, []string{"title-only"}) {
+		t.Fatalf("Search() IDs = %v", gotIDs)
+	}
+}
+
+func TestRankingTitleMatchFirst(t *testing.T) {
+	dir := t.TempDir()
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "body", "Generic note", nil, strings.Repeat("ranking ", 20)),
+		testEntry(t, dir, "title", "Ranking", nil, "short body"),
+	}}
+
+	got, err := SearchWithIndexPath(idx, Query{Text: "ranking", Limit: 0}, filepath.Join(dir, ".tnotes", "bleve"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 2 || got[0].Entry.ID != "title" {
+		t.Fatalf("title match should rank first, got %v", resultIDs(got))
+	}
+}
+
+func TestSnippets(t *testing.T) {
+	dir := t.TempDir()
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "snippet", "Snippet note", nil, "before important context after"),
+	}}
+
+	got, err := SearchWithIndexPath(idx, Query{Text: "important", Snippets: true}, filepath.Join(dir, ".tnotes", "bleve"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !strings.Contains(got[0].Snippet, "important") {
+		t.Fatalf("snippet = %#v", got)
+	}
+}
+
+func TestMigrationAutoBuildsMissingBleveIndex(t *testing.T) {
+	dir := t.TempDir()
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "migration", "Migration", nil, "autobuild needle"),
+	}}
+	indexPath := filepath.Join(dir, ".tnotes", "bleve")
+
+	got, err := SearchWithIndexPath(idx, Query{Text: "needle"}, indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(indexPath); err != nil {
+		t.Fatalf("bleve index was not created: %v", err)
+	}
+	if gotIDs := resultIDs(got); !reflect.DeepEqual(gotIDs, []string{"migration"}) {
+		t.Fatalf("Search() IDs = %v", gotIDs)
+	}
+}
+
+func TestIndexEntryUpdatesBleve(t *testing.T) {
+	dir := t.TempDir()
+	indexPath := filepath.Join(dir, ".tnotes", "bleve")
+	idx := &index.Index{Entries: []note.IndexEntry{}}
+	if err := RebuildBleveAt(idx, indexPath); err != nil {
+		t.Fatal(err)
 	}
 
-	return &index.Index{Entries: entries}
+	entry := testEntry(t, dir, "added", "Added", nil, "fresh searchable body")
+	idx.AddEntry(entry)
+	if err := IndexEntryAt(entry, indexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := SearchWithIndexPath(idx, Query{Text: "fresh"}, indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotIDs := resultIDs(got); !reflect.DeepEqual(gotIDs, []string{"added"}) {
+		t.Fatalf("Search() IDs = %v", gotIDs)
+	}
+}
+
+func TestIndexEntryWithIndexBuildsFullCorpusWhenBleveMissing(t *testing.T) {
+	dir := t.TempDir()
+	indexPath := filepath.Join(dir, ".tnotes", "bleve")
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "existing", "Existing", nil, "old corpus needle"),
+	}}
+
+	entry := testEntry(t, dir, "added", "Added", nil, "fresh body")
+	idx.AddEntry(entry)
+	if err := IndexEntryWithIndexAt(idx, entry, indexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := SearchWithIndexPath(idx, Query{Text: "needle"}, indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotIDs := resultIDs(got); !reflect.DeepEqual(gotIDs, []string{"existing"}) {
+		t.Fatalf("Search() IDs = %v", gotIDs)
+	}
 }
 
 func testEntry(t *testing.T, dir, id, title string, tags []string, content string) note.IndexEntry {
 	t.Helper()
-
 	path := filepath.Join(dir, id+".md")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	n := &note.Note{ID: id, Title: title, Tags: tags, Links: []string{}, Created: "2026-01-01", Modified: "2026-01-01"}
+	if err := os.WriteFile(path, []byte(n.ToMarkdown(content)), 0644); err != nil {
 		t.Fatal(err)
 	}
+	n.Path = path
+	return n.ToIndexEntry()
+}
 
-	return note.IndexEntry{
-		ID:    id,
-		Title: title,
-		Tags:  tags,
-		Path:  path,
+func assertSameIDs(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("Search() IDs = %v, want same set as %v", got, want)
+	}
+	seen := map[string]int{}
+	for _, id := range got {
+		seen[id]++
+	}
+	for _, id := range want {
+		seen[id]--
+	}
+	for id, count := range seen {
+		if count != 0 {
+			t.Fatalf("Search() IDs = %v, want same set as %v (mismatch %s)", got, want, id)
+		}
 	}
 }
 
@@ -138,10 +243,15 @@ func resultIDs(results []Result) []string {
 	return ids
 }
 
-func resultMatches(results []Result) map[string][]string {
-	matches := make(map[string][]string, len(results))
-	for _, result := range results {
-		matches[result.Entry.ID] = result.Matches
+func TestResultShapeKeepsEntry(t *testing.T) {
+	data, err := json.Marshal(Result{Entry: note.IndexEntry{ID: "id"}, Score: 1, Snippet: "s"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	return matches
+	if !strings.Contains(string(data), `"entry"`) {
+		t.Fatalf("Result JSON missing entry: %s", data)
+	}
+	if strings.Contains(string(data), `"score"`) {
+		t.Fatalf("Result JSON should not include score: %s", data)
+	}
 }

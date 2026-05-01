@@ -12,6 +12,7 @@ import (
 	"github.com/toshism/tnotes/internal/index"
 	"github.com/toshism/tnotes/internal/note"
 	"github.com/toshism/tnotes/internal/project"
+	"github.com/toshism/tnotes/internal/search"
 )
 
 var (
@@ -73,6 +74,9 @@ var addCmd = &cobra.Command{
 		idx.AddEntry(n.ToIndexEntry())
 		if err := idx.Save(); err != nil {
 			return fmt.Errorf("failed to save index: %w", err)
+		}
+		if err := search.IndexEntryWithIndex(idx, n.ToIndexEntry()); err != nil {
+			return fmt.Errorf("failed to update search index: %w", err)
 		}
 
 		if jsonOutput {
