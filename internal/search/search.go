@@ -50,12 +50,14 @@ type Result struct {
 }
 
 type bleveDocument struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Content  string   `json:"content"`
-	Tags     []string `json:"tags"`
-	Created  string   `json:"created"`
-	Modified string   `json:"modified"`
+	ID                 string   `json:"id"`
+	Title              string   `json:"title"`
+	Content            string   `json:"content"`
+	TitleIdentifiers   []string `json:"title_identifiers"`
+	ContentIdentifiers []string `json:"content_identifiers"`
+	Tags               []string `json:"tags"`
+	Created            string   `json:"created"`
+	Modified           string   `json:"modified"`
 }
 
 // Search performs a search against the configured bleve index, auto-building it
@@ -282,6 +284,8 @@ func newIndexMapping() mapping.IndexMapping {
 	docMapping.AddFieldMappingsAt("id", keywordField())
 	docMapping.AddFieldMappingsAt("title", textField())
 	docMapping.AddFieldMappingsAt("content", textField())
+	docMapping.AddFieldMappingsAt("title_identifiers", keywordField())
+	docMapping.AddFieldMappingsAt("content_identifiers", keywordField())
 	docMapping.AddFieldMappingsAt("tags", keywordField())
 
 	dateField := bleve.NewDateTimeFieldMapping()
@@ -352,13 +356,16 @@ func indexEntries(b bleve.Index, idx *index.Index) error {
 }
 
 func documentForEntry(entry note.IndexEntry) bleveDocument {
+	content := readEntryContent(entry)
 	return bleveDocument{
-		ID:       entry.ID,
-		Title:    expandTextForSearch(entry.Title),
-		Content:  expandTextForSearch(readEntryContent(entry)),
-		Tags:     lowerStrings(entry.Tags),
-		Created:  normalizeDate(entry.Created),
-		Modified: normalizeDate(entry.Modified),
+		ID:                 entry.ID,
+		Title:              expandTextForSearch(entry.Title),
+		Content:            expandTextForSearch(content),
+		TitleIdentifiers:   exactIdentifiers(entry.Title),
+		ContentIdentifiers: exactIdentifiers(content),
+		Tags:               lowerStrings(entry.Tags),
+		Created:            normalizeDate(entry.Created),
+		Modified:           normalizeDate(entry.Modified),
 	}
 }
 
@@ -380,7 +387,7 @@ func readEntryContent(entry note.IndexEntry) string {
 func expandTextForSearch(text string) string {
 	var extra []string
 	for _, word := range strings.FieldsFunc(text, func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
+		return !isASCIIAlphaNum(r)
 	}) {
 		lower := strings.ToLower(word)
 		if len(lower) > 4 && (strings.HasSuffix(lower, "er") || strings.HasSuffix(lower, "ed") || strings.HasSuffix(lower, "ing")) {
@@ -391,6 +398,50 @@ func expandTextForSearch(text string) string {
 		return text
 	}
 	return text + "\n" + strings.Join(extra, " ")
+}
+
+func exactIdentifiers(text string) []string {
+	seen := make(map[string]bool)
+	var identifiers []string
+	for _, token := range strings.Fields(text) {
+		identifier := strings.ToLower(strings.TrimFunc(token, func(r rune) bool {
+			return !isASCIIAlphaNum(r)
+		}))
+		if identifier == "" || seen[identifier] {
+			continue
+		}
+		seen[identifier] = true
+		identifiers = append(identifiers, identifier)
+	}
+	return identifiers
+}
+
+func isExactIdentifierQueryTerm(term string) bool {
+	term = strings.TrimSpace(term)
+	return strings.ContainsAny(term, "_.:") || hasCamelCaseBoundary(term)
+}
+
+func hasCamelCaseBoundary(s string) bool {
+	var prev rune
+	for i, r := range s {
+		if i > 0 && isASCIILower(prev) && isASCIIUpper(r) {
+			return true
+		}
+		prev = r
+	}
+	return false
+}
+
+func isASCIIAlphaNum(r rune) bool {
+	return isASCIILower(r) || isASCIIUpper(r) || (r >= '0' && r <= '9')
+}
+
+func isASCIILower(r rune) bool {
+	return r >= 'a' && r <= 'z'
+}
+
+func isASCIIUpper(r rune) bool {
+	return r >= 'A' && r <= 'Z'
 }
 
 func normalizeDate(s string) string {
@@ -435,6 +486,10 @@ func buildTextQuery(text string) blevequery.Query {
 	}
 	var termQueries []blevequery.Query
 	for _, term := range strings.Fields(text) {
+		if isExactIdentifierQueryTerm(term) {
+			termQueries = append(termQueries, exactIdentifierQuery(term))
+			continue
+		}
 		titleQuery := bleve.NewMatchQuery(term)
 		titleQuery.SetField("title")
 		titleQuery.SetBoost(4)
@@ -446,6 +501,16 @@ func buildTextQuery(text string) blevequery.Query {
 		return termQueries[0]
 	}
 	return bleve.NewConjunctionQuery(termQueries...)
+}
+
+func exactIdentifierQuery(term string) blevequery.Query {
+	term = strings.ToLower(strings.TrimSpace(term))
+	titleQuery := bleve.NewTermQuery(term)
+	titleQuery.SetField("title_identifiers")
+	titleQuery.SetBoost(4)
+	contentQuery := bleve.NewTermQuery(term)
+	contentQuery.SetField("content_identifiers")
+	return bleve.NewDisjunctionQuery(titleQuery, contentQuery)
 }
 
 func normalizeQueryFields(text string) string {
