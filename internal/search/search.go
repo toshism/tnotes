@@ -482,11 +482,7 @@ func snippetFromFragments(fragments map[string][]string) string {
 func lowerStrings(values []string) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
-		lower := strings.ToLower(value)
-		out = append(out, lower)
-		if _, suffix, ok := strings.Cut(lower, ":"); ok && suffix != "" {
-			out = append(out, suffix)
-		}
+		out = append(out, strings.ToLower(value))
 	}
 	return out
 }

@@ -19,8 +19,9 @@ func TestBleveSearch(t *testing.T) {
 		testEntry(t, dir, "policy", "Policy background", []string{"project:space"}, "A moon lander needs a careful operations plan."),
 		testEntry(t, dir, "phrase", "Phrase note", []string{"project:space"}, "This note contains the exact lander policy phrase."),
 		testEntry(t, dir, "other", "Other note", []string{"project:other", "topic:archive"}, "The mission excluded this policy."),
-		testEntry(t, dir, "required", "Required title", []string{"tag:foo"}, "required useful text"),
-		testEntry(t, dir, "excluded", "Excluded title", []string{"tag:bar"}, "required excluded text"),
+		testEntry(t, dir, "required", "Required title", []string{"foo"}, "required useful text"),
+		testEntry(t, dir, "excluded", "Excluded title", []string{"bar"}, "required excluded text"),
+		testEntry(t, dir, "prefixed", "Prefixed note", []string{"project:foo"}, "prefixed text"),
 	}}
 	indexPath := filepath.Join(dir, ".tnotes", "bleve")
 
@@ -60,7 +61,7 @@ func TestBleveSearch(t *testing.T) {
 			wantIDs: []string{"required"},
 		},
 		{
-			name:    "boolean OR over tag field alias",
+			name:    "boolean OR over tag field alias uses exact tag values",
 			query:   Query{Text: "tag:foo OR tag:bar", Limit: 0},
 			wantIDs: []string{"required", "excluded"},
 		},
@@ -78,7 +79,7 @@ func TestBleveSearch(t *testing.T) {
 				t.Fatal(err)
 			}
 			gotIDs := resultIDs(got)
-			if tt.name == "multi-word query uses word AND semantics" || tt.name == "single word hits stemmed variants" || tt.name == "boolean OR over tag field alias" || tt.name == "negative tag alias with colon-containing value" {
+			if tt.name == "multi-word query uses word AND semantics" || tt.name == "single word hits stemmed variants" || tt.name == "boolean OR over tag field alias uses exact tag values" || tt.name == "negative tag alias with colon-containing value" {
 				assertSameIDs(t, gotIDs, tt.wantIDs)
 				return
 			}
