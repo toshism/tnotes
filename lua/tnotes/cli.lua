@@ -96,21 +96,50 @@ end
 -- List all notes, optionally filtered by project
 function M.list(project)
   if project and project ~= "" then
-    return M.search(nil, "project:" .. project)
+    return M.search({ project = project, limit = 0 })
   end
   return M.run({ "list" })
 end
 
 -- Search notes
-function M.search(query, tag)
+-- Accepts either an opts table:
+--   { query = "text", tags = { "tag" }, project = "name", limit = 20, snippet = true }
+-- or the legacy positional shape: search(query, tag).
+function M.search(opts, legacy_tag)
+  if type(opts) == "string" or legacy_tag ~= nil then
+    opts = { query = opts, tags = legacy_tag }
+  elseif opts == nil then
+    opts = {}
+  end
+
   local args = { "search" }
-  if query and query ~= "" then
-    table.insert(args, query)
+  if opts.query and opts.query ~= "" then
+    table.insert(args, opts.query)
   end
-  if tag and tag ~= "" then
+
+  local tags = opts.tags or opts.tag
+  if type(tags) == "table" then
+    tags = table.concat(tags, ",")
+  end
+  if tags and tags ~= "" then
     table.insert(args, "--tag")
-    table.insert(args, tag)
+    table.insert(args, tags)
   end
+
+  if opts.project and opts.project ~= "" then
+    table.insert(args, "--project")
+    table.insert(args, opts.project)
+  end
+
+  if opts.limit ~= nil then
+    table.insert(args, "--limit")
+    table.insert(args, tostring(opts.limit))
+  end
+
+  if opts.snippet then
+    table.insert(args, "--snippet")
+  end
+
   return M.run(args)
 end
 
