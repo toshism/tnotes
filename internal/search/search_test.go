@@ -95,6 +95,56 @@ func TestBleveSearch(t *testing.T) {
 	}
 }
 
+func TestCodeIdentifierAnalyzer(t *testing.T) {
+	dir := t.TempDir()
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "snake", "Snake fixture", []string{"project:teamtosh"}, "The rollout mentions teamtosh_lander and nothing else."),
+		testEntry(t, dir, "snake-team", "Snake team fixture", nil, "This note mentions teamtosh only."),
+		testEntry(t, dir, "snake-land", "Snake land fixture", nil, "This note mentions lander only."),
+		testEntry(t, dir, "camel", "Camel fixture", nil, "React state flows through WaffleFlagsContext."),
+		testEntry(t, dir, "camel-context", "Camel context fixture", nil, "This note mentions context only."),
+		testEntry(t, dir, "mixed", "Mixed fixture", nil, "The getUserById_helper path validates identifier splitting."),
+		testEntry(t, dir, "stem", "Stem fixture", nil, "The learnings_agent writes durable notes."),
+		testEntry(t, dir, "tag-only", "Tag-only fixture", []string{"project:teamtosh"}, "No matching body tokens here."),
+		testEntry(t, dir, "tag-suffix", "Tag suffix fixture", []string{"project:teamtosh-anything-else"}, "No matching body tokens here either."),
+	}}
+	indexPath := filepath.Join(dir, ".tnotes", "bleve")
+
+	tests := []struct {
+		name    string
+		query   Query
+		wantIDs []string
+	}{
+		{name: "snake case matches first part", query: Query{Text: "teamtosh", Limit: 0}, wantIDs: []string{"snake", "snake-team"}},
+		{name: "snake case matches second part", query: Query{Text: "lander", Limit: 0}, wantIDs: []string{"snake", "snake-land"}},
+		{name: "snake case exact token still matches without component overmatch", query: Query{Text: "teamtosh_lander", Limit: 0}, wantIDs: []string{"snake"}},
+		{name: "camel case matches first part", query: Query{Text: "waffle", Limit: 0}, wantIDs: []string{"camel"}},
+		{name: "camel case matches middle part", query: Query{Text: "flags", Limit: 0}, wantIDs: []string{"camel"}},
+		{name: "camel case matches last part", query: Query{Text: "context", Limit: 0}, wantIDs: []string{"camel", "camel-context"}},
+		{name: "camel case exact token still matches without component overmatch", query: Query{Text: "WaffleFlagsContext", Limit: 0}, wantIDs: []string{"camel"}},
+		{name: "mixed identifier matches get", query: Query{Text: "get", Limit: 0}, wantIDs: []string{"mixed"}},
+		{name: "mixed identifier matches user", query: Query{Text: "user", Limit: 0}, wantIDs: []string{"mixed"}},
+		{name: "mixed identifier matches by", query: Query{Text: "by", Limit: 0}, wantIDs: []string{"mixed"}},
+		{name: "mixed identifier matches id", query: Query{Text: "id", Limit: 0}, wantIDs: []string{"mixed"}},
+		{name: "mixed identifier matches helper", query: Query{Text: "helper", Limit: 0}, wantIDs: []string{"mixed"}},
+		{name: "post split stemming matches learn", query: Query{Text: "learn", Limit: 0}, wantIDs: []string{"stem"}},
+		{name: "post split stemming matches learning", query: Query{Text: "learning", Limit: 0}, wantIDs: []string{"stem"}},
+		{name: "post split stemming matches agent", query: Query{Text: "agent", Limit: 0}, wantIDs: []string{"stem"}},
+		{name: "exact tag filter does not match tag suffix", query: Query{Tags: []string{"project:teamtosh"}, Limit: 0}, wantIDs: []string{"snake", "tag-only"}},
+		{name: "tag values are not searched as text", query: Query{Text: "project", Limit: 0}, wantIDs: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SearchWithIndexPath(idx, tt.query, indexPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertSameIDs(t, resultIDs(got), tt.wantIDs)
+		})
+	}
+}
+
 func TestTitleOnlyStemmedVariantMatches(t *testing.T) {
 	dir := t.TempDir()
 	idx := &index.Index{Entries: []note.IndexEntry{

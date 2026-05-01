@@ -8,6 +8,15 @@ import (
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/analysis"
+	"github.com/blevesearch/bleve/v2/analysis/analyzer/custom"
+	blevelang "github.com/blevesearch/bleve/v2/analysis/lang/en"
+	"github.com/blevesearch/bleve/v2/analysis/token/camelcase"
+	"github.com/blevesearch/bleve/v2/analysis/token/lowercase"
+	"github.com/blevesearch/bleve/v2/analysis/token/porter"
+	"github.com/blevesearch/bleve/v2/analysis/token/stop"
+	bleveregexp "github.com/blevesearch/bleve/v2/analysis/tokenizer/regexp"
+	blevetokenmap "github.com/blevesearch/bleve/v2/analysis/tokenmap"
 	"github.com/blevesearch/bleve/v2/mapping"
 	blevesearch "github.com/blevesearch/bleve/v2/search"
 	blevequery "github.com/blevesearch/bleve/v2/search/query"
@@ -16,7 +25,13 @@ import (
 	"github.com/toshism/tnotes/internal/note"
 )
 
-const defaultLimit = 20
+const (
+	defaultLimit       = 20
+	codeAnalyzerName   = "tnotes_code_en"
+	codeTokenizerName  = "tnotes_code_tokenizer"
+	codeStopMapName    = "tnotes_stop_en_with_by"
+	codeStopFilterName = "tnotes_stop_en_with_by"
+)
 
 // Query represents search parameters
 type Query struct {
@@ -35,12 +50,14 @@ type Result struct {
 }
 
 type bleveDocument struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Content  string   `json:"content"`
-	Tags     []string `json:"tags"`
-	Created  string   `json:"created"`
-	Modified string   `json:"modified"`
+	ID                 string   `json:"id"`
+	Title              string   `json:"title"`
+	Content            string   `json:"content"`
+	TitleIdentifiers   []string `json:"title_identifiers"`
+	ContentIdentifiers []string `json:"content_identifiers"`
+	Tags               []string `json:"tags"`
+	Created            string   `json:"created"`
+	Modified           string   `json:"modified"`
 }
 
 // Search performs a search against the configured bleve index, auto-building it
@@ -222,12 +239,35 @@ func createBleveIndex(indexPath string) (bleve.Index, error) {
 
 func newIndexMapping() mapping.IndexMapping {
 	idxMapping := bleve.NewIndexMapping()
-	idxMapping.DefaultAnalyzer = "en"
+	mustAddCustomTokenizer(idxMapping, codeTokenizerName, map[string]interface{}{
+		"type":   bleveregexp.Name,
+		"regexp": `[\p{L}\p{N}]+`,
+	})
+	mustAddCustomTokenMap(idxMapping, codeStopMapName, map[string]interface{}{
+		"type":   blevetokenmap.Name,
+		"tokens": englishStopWordsExcept("by"),
+	})
+	mustAddCustomTokenFilter(idxMapping, codeStopFilterName, map[string]interface{}{
+		"type":           stop.Name,
+		"stop_token_map": codeStopMapName,
+	})
+	mustAddCustomAnalyzer(idxMapping, codeAnalyzerName, map[string]interface{}{
+		"type":      custom.Name,
+		"tokenizer": codeTokenizerName,
+		"token_filters": []string{
+			blevelang.PossessiveName,
+			camelcase.Name,
+			lowercase.Name,
+			codeStopFilterName,
+			porter.Name,
+		},
+	})
+	idxMapping.DefaultAnalyzer = codeAnalyzerName
 
 	docMapping := bleve.NewDocumentMapping()
 	textField := func() *mapping.FieldMapping {
 		fm := bleve.NewTextFieldMapping()
-		fm.Analyzer = "en"
+		fm.Analyzer = codeAnalyzerName
 		fm.Store = true
 		fm.IncludeTermVectors = true
 		fm.IncludeInAll = true
@@ -244,6 +284,8 @@ func newIndexMapping() mapping.IndexMapping {
 	docMapping.AddFieldMappingsAt("id", keywordField())
 	docMapping.AddFieldMappingsAt("title", textField())
 	docMapping.AddFieldMappingsAt("content", textField())
+	docMapping.AddFieldMappingsAt("title_identifiers", keywordField())
+	docMapping.AddFieldMappingsAt("content_identifiers", keywordField())
 	docMapping.AddFieldMappingsAt("tags", keywordField())
 
 	dateField := bleve.NewDateTimeFieldMapping()
@@ -256,6 +298,55 @@ func newIndexMapping() mapping.IndexMapping {
 	return idxMapping
 }
 
+func mustAddCustomTokenizer(idxMapping *mapping.IndexMappingImpl, name string, config map[string]interface{}) {
+	if err := idxMapping.AddCustomTokenizer(name, config); err != nil {
+		panic(err)
+	}
+}
+
+func mustAddCustomTokenMap(idxMapping *mapping.IndexMappingImpl, name string, config map[string]interface{}) {
+	if err := idxMapping.AddCustomTokenMap(name, config); err != nil {
+		panic(err)
+	}
+}
+
+func mustAddCustomTokenFilter(idxMapping *mapping.IndexMappingImpl, name string, config map[string]interface{}) {
+	if err := idxMapping.AddCustomTokenFilter(name, config); err != nil {
+		panic(err)
+	}
+}
+
+func mustAddCustomAnalyzer(idxMapping *mapping.IndexMappingImpl, name string, config map[string]interface{}) {
+	if err := idxMapping.AddCustomAnalyzer(name, config); err != nil {
+		panic(err)
+	}
+}
+
+func englishStopWordsExcept(except ...string) []interface{} {
+	excluded := make(map[string]bool, len(except))
+	for _, word := range except {
+		excluded[word] = true
+	}
+
+	stopWords := analysis.NewTokenMap()
+	if err := stopWords.LoadBytes(blevelang.EnglishStopWords); err != nil {
+		panic(err)
+	}
+	words := make([]string, 0, len(stopWords))
+	for word := range stopWords {
+		if !excluded[word] {
+			words = append(words, word)
+		}
+	}
+	sort.Strings(words)
+
+	tokens := make([]interface{}, 0, len(words))
+	for _, word := range words {
+		tokens = append(tokens, word)
+	}
+	return tokens
+}
+
 func indexEntries(b bleve.Index, idx *index.Index) error {
 	batch := b.NewBatch()
 	for _, entry := range idx.Entries {
@@ -265,13 +356,16 @@ func indexEntries(b bleve.Index, idx *index.Index) error {
 }
 
 func documentForEntry(entry note.IndexEntry) bleveDocument {
+	content := readEntryContent(entry)
 	return bleveDocument{
-		ID:       entry.ID,
-		Title:    expandTextForSearch(entry.Title),
-		Content:  expandTextForSearch(readEntryContent(entry)),
-		Tags:     lowerStrings(entry.Tags),
-		Created:  normalizeDate(entry.Created),
-		Modified: normalizeDate(entry.Modified),
+		ID:                 entry.ID,
+		Title:              expandTextForSearch(entry.Title),
+		Content:            expandTextForSearch(content),
+		TitleIdentifiers:   exactIdentifiers(entry.Title),
+		ContentIdentifiers: exactIdentifiers(content),
+		Tags:               lowerStrings(entry.Tags),
+		Created:            normalizeDate(entry.Created),
+		Modified:           normalizeDate(entry.Modified),
 	}
 }
 
@@ -293,7 +387,7 @@ func readEntryContent(entry note.IndexEntry) string {
 func expandTextForSearch(text string) string {
 	var extra []string
 	for _, word := range strings.FieldsFunc(text, func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
+		return !isASCIIAlphaNum(r)
 	}) {
 		lower := strings.ToLower(word)
 		if len(lower) > 4 && (strings.HasSuffix(lower, "er") || strings.HasSuffix(lower, "ed") || strings.HasSuffix(lower, "ing")) {
@@ -304,6 +398,50 @@ func expandTextForSearch(text string) string {
 		return text
 	}
 	return text + "\n" + strings.Join(extra, " ")
+}
+
+func exactIdentifiers(text string) []string {
+	seen := make(map[string]bool)
+	var identifiers []string
+	for _, token := range strings.Fields(text) {
+		identifier := strings.ToLower(strings.TrimFunc(token, func(r rune) bool {
+			return !isASCIIAlphaNum(r)
+		}))
+		if identifier == "" || seen[identifier] {
+			continue
+		}
+		seen[identifier] = true
+		identifiers = append(identifiers, identifier)
+	}
+	return identifiers
+}
+
+func isExactIdentifierQueryTerm(term string) bool {
+	term = strings.TrimSpace(term)
+	return strings.ContainsAny(term, "_.:") || hasCamelCaseBoundary(term)
+}
+
+func hasCamelCaseBoundary(s string) bool {
+	var prev rune
+	for i, r := range s {
+		if i > 0 && isASCIILower(prev) && isASCIIUpper(r) {
+			return true
+		}
+		prev = r
+	}
+	return false
+}
+
+func isASCIIAlphaNum(r rune) bool {
+	return isASCIILower(r) || isASCIIUpper(r) || (r >= '0' && r <= '9')
+}
+
+func isASCIILower(r rune) bool {
+	return r >= 'a' && r <= 'z'
+}
+
+func isASCIIUpper(r rune) bool {
+	return r >= 'A' && r <= 'Z'
 }
 
 func normalizeDate(s string) string {
@@ -348,6 +486,10 @@ func buildTextQuery(text string) blevequery.Query {
 	}
 	var termQueries []blevequery.Query
 	for _, term := range strings.Fields(text) {
+		if isExactIdentifierQueryTerm(term) {
+			termQueries = append(termQueries, exactIdentifierQuery(term))
+			continue
+		}
 		titleQuery := bleve.NewMatchQuery(term)
 		titleQuery.SetField("title")
 		titleQuery.SetBoost(4)
@@ -359,6 +501,16 @@ func buildTextQuery(text string) blevequery.Query {
 		return termQueries[0]
 	}
 	return bleve.NewConjunctionQuery(termQueries...)
+}
+
+func exactIdentifierQuery(term string) blevequery.Query {
+	term = strings.ToLower(strings.TrimSpace(term))
+	titleQuery := bleve.NewTermQuery(term)
+	titleQuery.SetField("title_identifiers")
+	titleQuery.SetBoost(4)
+	contentQuery := bleve.NewTermQuery(term)
+	contentQuery.SetField("content_identifiers")
+	return bleve.NewDisjunctionQuery(titleQuery, contentQuery)
 }
 
 func normalizeQueryFields(text string) string {
