@@ -108,8 +108,12 @@ Requires [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) and 
 |-----|--------|
 | `gf` | Follow tnotes link (in markdown files) |
 | `<leader>nn` | Create new note |
-| `<leader>ns` | Search notes (Telescope) |
+| `<leader>ns` | Search notes with the indexed search picker (Telescope) |
 | `<leader>nt` | Browse tags (Telescope) |
+
+The main Telescope notes picker (`:Telescope tnotes notes`, also used by `<leader>ns`) is powered by `tnotes search`, so free-text input returns index-ranked results over note titles and content. Search-prefix filters can be typed directly into the prompt, for example `tag:meeting`, `project:tnotes`, or `tag:meeting project:tnotes roadmap`; remaining text is passed through to the indexed search query. Opening the picker with an empty prompt shows up to 50 recent notes for the auto-detected current project, falling back to recent notes across all projects if no project-specific results are found.
+
+For the old flat all-notes browser, use `:Telescope tnotes notes_all`.
 
 All keymaps can be customized or disabled:
 

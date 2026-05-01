@@ -3,12 +3,16 @@ local M = {}
 local pickers = require("telescope.pickers")
 local finders = require("telescope.finders")
 local conf = require("telescope.config").values
+local sorters = require("telescope.sorters")
 local actions = require("telescope.actions")
 local action_state = require("telescope.actions.state")
 local previewers = require("telescope.previewers")
 
 local cli = require("tnotes.cli")
 local config = require("tnotes.config")
+
+local DEFAULT_SEARCH_LIMIT = 50
+local SNIPPET_LIMIT = 80
 
 -- Get telescope theme options
 local function get_theme_opts(opts)
@@ -24,8 +28,177 @@ local function get_theme_opts(opts)
   return opts
 end
 
--- Notes picker - fuzzy find by title
+local function display_tags(note)
+  local display = {}
+  for _, tag in ipairs(note.tags or {}) do
+    if not tag:match("^project:") and not tag:match("^path:") then
+      table.insert(display, tag)
+    end
+  end
+  if #display == 0 then
+    return ""
+  end
+  return " [" .. table.concat(display, ", ") .. "]"
+end
+
+local function clean_snippet(snippet)
+  if not snippet or snippet == "" then
+    return ""
+  end
+  snippet = snippet:gsub("<[^>]+>", ""):gsub("%s+", " ")
+  snippet = vim.trim(snippet)
+  if #snippet > SNIPPET_LIMIT then
+    snippet = snippet:sub(1, SNIPPET_LIMIT - 1) .. "…"
+  end
+  return snippet
+end
+
+local function unwrap_result(result)
+  local note = result.entry or result
+  if result.entry then
+    note._tnotes_matches = result.matches
+    note._tnotes_snippet = result.snippet
+  end
+  return note
+end
+
+local function normalize_results(results)
+  local notes = {}
+  for _, result in ipairs(results or {}) do
+    table.insert(notes, unwrap_result(result))
+  end
+  return notes
+end
+
+local function sort_recent(notes)
+  table.sort(notes, function(a, b)
+    return (a.id or "") > (b.id or "")
+  end)
+  return notes
+end
+
+local function note_entry(note)
+  local title = note.title or note.id or "untitled"
+  local snippet = clean_snippet(note._tnotes_snippet)
+  local display = title .. display_tags(note)
+  if snippet ~= "" then
+    display = display .. " — " .. snippet
+  end
+  return {
+    value = note,
+    display = display,
+    ordinal = title .. " " .. (note.id or "") .. " " .. table.concat(note.tags or {}, " ") .. " " .. snippet,
+    path = note.path,
+  }
+end
+
+local function note_previewer()
+  return previewers.new_buffer_previewer({
+    title = "Note Preview",
+    define_preview = function(self, entry)
+      if entry.path then
+        conf.buffer_previewer_maker(entry.path, self.state.bufnr, {
+          bufname = self.state.bufname,
+        })
+      end
+    end,
+  })
+end
+
+local function open_note_mappings(prompt_bufnr, map)
+  actions.select_default:replace(function()
+    actions.close(prompt_bufnr)
+    local selection = action_state.get_selected_entry()
+    if selection and selection.path then
+      vim.cmd("edit " .. vim.fn.fnameescape(selection.path))
+    end
+  end)
+  return true
+end
+
+local function parse_search_prompt(prompt)
+  local parsed = { query_parts = {}, tags = {} }
+  for _, token in ipairs(vim.split(prompt or "", "%s+", { trimempty = true })) do
+    local tag = token:match("^tag:(.+)$")
+    local project = token:match("^project:(.+)$")
+    if tag and tag ~= "" then
+      table.insert(parsed.tags, tag)
+    elseif project and project ~= "" then
+      parsed.project = project
+    else
+      table.insert(parsed.query_parts, token)
+    end
+  end
+  parsed.query = table.concat(parsed.query_parts, " ")
+  parsed.query_parts = nil
+  if #parsed.tags == 0 then
+    parsed.tags = nil
+  end
+  return parsed
+end
+
+local function current_project()
+  local ok, project = pcall(cli.resolve_project)
+  if ok then
+    return project
+  end
+  return nil
+end
+
+local function search_notes(prompt)
+  local parsed = parse_search_prompt(prompt)
+  local opts = {
+    query = parsed.query,
+    tags = parsed.tags,
+    project = parsed.project,
+    limit = DEFAULT_SEARCH_LIMIT,
+    snippet = true,
+  }
+
+  if parsed.query == "" and not parsed.project and not parsed.tags then
+    local project = current_project()
+    if project and project ~= "" then
+      opts.project = project
+      local ok, project_results = cli.search(opts)
+      if ok and project_results and #project_results > 0 then
+        return sort_recent(normalize_results(project_results))
+      elseif not ok then
+        vim.notify("Failed to search project notes: " .. tostring(project_results), vim.log.levels.WARN)
+      end
+      opts.project = nil
+    end
+  end
+
+  local ok, results = cli.search(opts)
+  if not ok then
+    vim.notify("Failed to search notes: " .. tostring(results), vim.log.levels.ERROR)
+    return {}
+  end
+  local notes = normalize_results(results)
+  if parsed.query == "" then
+    sort_recent(notes)
+  end
+  return notes
+end
+
+-- Notes picker - indexed search-backed note browser
 function M.notes(opts)
+  opts = get_theme_opts(opts)
+
+  pickers.new(opts, {
+    prompt_title = "tnotes search",
+    finder = finders.new_dynamic({
+      fn = search_notes,
+      entry_maker = note_entry,
+    }),
+    sorter = sorters.empty(),
+    previewer = note_previewer(),
+    attach_mappings = open_note_mappings,
+  }):find()
+end
+
+-- Legacy all-notes picker - flat list fuzzy find by title
+function M.notes_all(opts)
   opts = get_theme_opts(opts)
 
   local ok, notes = cli.list()
@@ -35,43 +208,14 @@ function M.notes(opts)
   end
 
   pickers.new(opts, {
-    prompt_title = "tnotes",
+    prompt_title = "tnotes all notes",
     finder = finders.new_table({
       results = notes,
-      entry_maker = function(note)
-        local tags_str = ""
-        if note.tags and #note.tags > 0 then
-          tags_str = " [" .. table.concat(note.tags, ", ") .. "]"
-        end
-        return {
-          value = note,
-          display = note.title .. tags_str,
-          ordinal = note.title .. " " .. (note.id or "") .. " " .. table.concat(note.tags or {}, " "),
-          path = note.path,
-        }
-      end,
+      entry_maker = note_entry,
     }),
     sorter = conf.generic_sorter(opts),
-    previewer = previewers.new_buffer_previewer({
-      title = "Note Preview",
-      define_preview = function(self, entry)
-        if entry.path then
-          conf.buffer_previewer_maker(entry.path, self.state.bufnr, {
-            bufname = self.state.bufname,
-          })
-        end
-      end,
-    }),
-    attach_mappings = function(prompt_bufnr, map)
-      actions.select_default:replace(function()
-        actions.close(prompt_bufnr)
-        local selection = action_state.get_selected_entry()
-        if selection and selection.path then
-          vim.cmd("edit " .. vim.fn.fnameescape(selection.path))
-        end
-      end)
-      return true
-    end,
+    previewer = note_previewer(),
+    attach_mappings = open_note_mappings,
   }):find()
 end
 
@@ -86,59 +230,17 @@ function M.project_notes(opts)
     return
   end
 
-  -- search results have an .entry wrapper, unwrap for consistency
-  local notes = {}
-  for _, r in ipairs(results) do
-    table.insert(notes, r.entry or r)
-  end
+  local notes = normalize_results(results)
 
   pickers.new(opts, {
     prompt_title = "tnotes [" .. project .. "]",
     finder = finders.new_table({
       results = notes,
-      entry_maker = function(note)
-        local tags_str = ""
-        if note.tags and #note.tags > 0 then
-          -- Filter out project: and path: tags for display
-          local display_tags = {}
-          for _, t in ipairs(note.tags) do
-            if not t:match("^project:") and not t:match("^path:") then
-              table.insert(display_tags, t)
-            end
-          end
-          if #display_tags > 0 then
-            tags_str = " [" .. table.concat(display_tags, ", ") .. "]"
-          end
-        end
-        return {
-          value = note,
-          display = (note.title or note.id) .. tags_str,
-          ordinal = (note.title or "") .. " " .. (note.id or "") .. " " .. table.concat(note.tags or {}, " "),
-          path = note.path,
-        }
-      end,
+      entry_maker = note_entry,
     }),
     sorter = conf.generic_sorter(opts),
-    previewer = previewers.new_buffer_previewer({
-      title = "Note Preview",
-      define_preview = function(self, entry)
-        if entry.path then
-          conf.buffer_previewer_maker(entry.path, self.state.bufnr, {
-            bufname = self.state.bufname,
-          })
-        end
-      end,
-    }),
-    attach_mappings = function(prompt_bufnr, map)
-      actions.select_default:replace(function()
-        actions.close(prompt_bufnr)
-        local selection = action_state.get_selected_entry()
-        if selection and selection.path then
-          vim.cmd("edit " .. vim.fn.fnameescape(selection.path))
-        end
-      end)
-      return true
-    end,
+    previewer = note_previewer(),
+    attach_mappings = open_note_mappings,
   }):find()
 end
 
@@ -189,46 +291,15 @@ function M.notes_by_tag(tag, opts)
     return
   end
 
-  -- search results have an .entry wrapper, unwrap
-  local unwrapped = {}
-  for _, r in ipairs(notes) do
-    table.insert(unwrapped, r.entry or r)
-  end
-
   pickers.new(opts, {
     prompt_title = "tnotes [tag: " .. tag .. "]",
     finder = finders.new_table({
-      results = unwrapped,
-      entry_maker = function(note)
-        return {
-          value = note,
-          display = note.title or note.id or "untitled",
-          ordinal = (note.title or "") .. " " .. (note.id or ""),
-          path = note.path,
-        }
-      end,
+      results = normalize_results(notes),
+      entry_maker = note_entry,
     }),
     sorter = conf.generic_sorter(opts),
-    previewer = previewers.new_buffer_previewer({
-      title = "Note Preview",
-      define_preview = function(self, entry)
-        if entry.path then
-          conf.buffer_previewer_maker(entry.path, self.state.bufnr, {
-            bufname = self.state.bufname,
-          })
-        end
-      end,
-    }),
-    attach_mappings = function(prompt_bufnr, map)
-      actions.select_default:replace(function()
-        actions.close(prompt_bufnr)
-        local selection = action_state.get_selected_entry()
-        if selection and selection.path then
-          vim.cmd("edit " .. vim.fn.fnameescape(selection.path))
-        end
-      end)
-      return true
-    end,
+    previewer = note_previewer(),
+    attach_mappings = open_note_mappings,
   }):find()
 end
 
@@ -242,7 +313,7 @@ function M.search(opts)
     return
   end
 
-  local ok, notes = cli.search(query)
+  local ok, notes = cli.search({ query = query, snippet = true })
   if not ok then
     vim.notify("Failed to search notes: " .. tostring(notes), vim.log.levels.ERROR)
     return
@@ -251,41 +322,12 @@ function M.search(opts)
   pickers.new(opts, {
     prompt_title = "tnotes search: " .. query,
     finder = finders.new_table({
-      results = notes,
-      entry_maker = function(note)
-        local tags_str = ""
-        if note.tags and #note.tags > 0 then
-          tags_str = " [" .. table.concat(note.tags, ", ") .. "]"
-        end
-        return {
-          value = note,
-          display = note.title .. tags_str,
-          ordinal = note.title,
-          path = note.path,
-        }
-      end,
+      results = normalize_results(notes),
+      entry_maker = note_entry,
     }),
     sorter = conf.generic_sorter(opts),
-    previewer = previewers.new_buffer_previewer({
-      title = "Note Preview",
-      define_preview = function(self, entry)
-        if entry.path then
-          conf.buffer_previewer_maker(entry.path, self.state.bufnr, {
-            bufname = self.state.bufname,
-          })
-        end
-      end,
-    }),
-    attach_mappings = function(prompt_bufnr, map)
-      actions.select_default:replace(function()
-        actions.close(prompt_bufnr)
-        local selection = action_state.get_selected_entry()
-        if selection and selection.path then
-          vim.cmd("edit " .. vim.fn.fnameescape(selection.path))
-        end
-      end)
-      return true
-    end,
+    previewer = note_previewer(),
+    attach_mappings = open_note_mappings,
   }):find()
 end
 
