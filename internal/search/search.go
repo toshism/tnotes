@@ -59,19 +59,21 @@ func matchEntry(entry note.IndexEntry, q Query) []string {
 	// Text search
 	if q.Text != "" {
 		textLower := strings.ToLower(q.Text)
+		titleMatch := strings.Contains(strings.ToLower(entry.Title), textLower)
+		contentMatch := contentMatches(entry.Path, textLower)
 
 		// Search in title
-		if strings.Contains(strings.ToLower(entry.Title), textLower) {
+		if titleMatch {
 			matches = append(matches, "title")
 		}
 
 		// Search in content (read file)
-		if contentMatches(entry.Path, textLower) {
+		if contentMatch {
 			matches = append(matches, "content")
 		}
 
-		// If text was specified but nothing matched, return nil
-		if len(q.Tags) == 0 && len(matches) == 0 {
+		// If text was specified but neither title nor content matched, return nil
+		if !titleMatch && !contentMatch {
 			return nil
 		}
 	}
