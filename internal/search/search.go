@@ -8,6 +8,15 @@ import (
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/analysis"
+	"github.com/blevesearch/bleve/v2/analysis/analyzer/custom"
+	blevelang "github.com/blevesearch/bleve/v2/analysis/lang/en"
+	"github.com/blevesearch/bleve/v2/analysis/token/camelcase"
+	"github.com/blevesearch/bleve/v2/analysis/token/lowercase"
+	"github.com/blevesearch/bleve/v2/analysis/token/porter"
+	"github.com/blevesearch/bleve/v2/analysis/token/stop"
+	bleveregexp "github.com/blevesearch/bleve/v2/analysis/tokenizer/regexp"
+	blevetokenmap "github.com/blevesearch/bleve/v2/analysis/tokenmap"
 	"github.com/blevesearch/bleve/v2/mapping"
 	blevesearch "github.com/blevesearch/bleve/v2/search"
 	blevequery "github.com/blevesearch/bleve/v2/search/query"
@@ -16,7 +25,13 @@ import (
 	"github.com/toshism/tnotes/internal/note"
 )
 
-const defaultLimit = 20
+const (
+	defaultLimit       = 20
+	codeAnalyzerName   = "tnotes_code_en"
+	codeTokenizerName  = "tnotes_code_tokenizer"
+	codeStopMapName    = "tnotes_stop_en_with_by"
+	codeStopFilterName = "tnotes_stop_en_with_by"
+)
 
 // Query represents search parameters
 type Query struct {
@@ -222,12 +237,35 @@ func createBleveIndex(indexPath string) (bleve.Index, error) {
 
 func newIndexMapping() mapping.IndexMapping {
 	idxMapping := bleve.NewIndexMapping()
-	idxMapping.DefaultAnalyzer = "en"
+	mustAddCustomTokenizer(idxMapping, codeTokenizerName, map[string]interface{}{
+		"type":   bleveregexp.Name,
+		"regexp": `[\p{L}\p{N}]+`,
+	})
+	mustAddCustomTokenMap(idxMapping, codeStopMapName, map[string]interface{}{
+		"type":   blevetokenmap.Name,
+		"tokens": englishStopWordsExcept("by"),
+	})
+	mustAddCustomTokenFilter(idxMapping, codeStopFilterName, map[string]interface{}{
+		"type":           stop.Name,
+		"stop_token_map": codeStopMapName,
+	})
+	mustAddCustomAnalyzer(idxMapping, codeAnalyzerName, map[string]interface{}{
+		"type":      custom.Name,
+		"tokenizer": codeTokenizerName,
+		"token_filters": []string{
+			blevelang.PossessiveName,
+			camelcase.Name,
+			lowercase.Name,
+			codeStopFilterName,
+			porter.Name,
+		},
+	})
+	idxMapping.DefaultAnalyzer = codeAnalyzerName
 
 	docMapping := bleve.NewDocumentMapping()
 	textField := func() *mapping.FieldMapping {
 		fm := bleve.NewTextFieldMapping()
-		fm.Analyzer = "en"
+		fm.Analyzer = codeAnalyzerName
 		fm.Store = true
 		fm.IncludeTermVectors = true
 		fm.IncludeInAll = true
@@ -254,6 +292,55 @@ func newIndexMapping() mapping.IndexMapping {
 
 	idxMapping.DefaultMapping = docMapping
 	return idxMapping
+}
+
+func mustAddCustomTokenizer(idxMapping *mapping.IndexMappingImpl, name string, config map[string]interface{}) {
+	if err := idxMapping.AddCustomTokenizer(name, config); err != nil {
+		panic(err)
+	}
+}
+
+func mustAddCustomTokenMap(idxMapping *mapping.IndexMappingImpl, name string, config map[string]interface{}) {
+	if err := idxMapping.AddCustomTokenMap(name, config); err != nil {
+		panic(err)
+	}
+}
+
+func mustAddCustomTokenFilter(idxMapping *mapping.IndexMappingImpl, name string, config map[string]interface{}) {
+	if err := idxMapping.AddCustomTokenFilter(name, config); err != nil {
+		panic(err)
+	}
+}
+
+func mustAddCustomAnalyzer(idxMapping *mapping.IndexMappingImpl, name string, config map[string]interface{}) {
+	if err := idxMapping.AddCustomAnalyzer(name, config); err != nil {
+		panic(err)
+	}
+}
+
+func englishStopWordsExcept(except ...string) []interface{} {
+	excluded := make(map[string]bool, len(except))
+	for _, word := range except {
+		excluded[word] = true
+	}
+
+	stopWords := analysis.NewTokenMap()
+	if err := stopWords.LoadBytes(blevelang.EnglishStopWords); err != nil {
+		panic(err)
+	}
+	words := make([]string, 0, len(stopWords))
+	for word := range stopWords {
+		if !excluded[word] {
+			words = append(words, word)
+		}
+	}
+	sort.Strings(words)
+
+	tokens := make([]interface{}, 0, len(words))
+	for _, word := range words {
+		tokens = append(tokens, word)
+	}
+	return tokens
 }
 
 func indexEntries(b bleve.Index, idx *index.Index) error {
