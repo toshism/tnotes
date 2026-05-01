@@ -76,7 +76,7 @@ func ResolvedNotesDirFor(notesDir string) string {
 
 // IndexDirFor returns the path to the .tnotes directory for a notes directory.
 func IndexDirFor(notesDir string) string {
-	return filepath.Join(ResolvedNotesDirFor(notesDir), ".tnotes")
+	return filepath.Join(notesDir, ".tnotes")
 }
 
 // IndexFileFor returns the path to the index.json file for a notes directory.

@@ -30,7 +30,7 @@ type Query struct {
 type Result struct {
 	Entry   note.IndexEntry `json:"entry"`
 	Matches []string        `json:"matches,omitempty"` // What matched (title, tag, content)
-	Score   float64         `json:"score,omitempty"`
+	Score   float64         `json:"-"`
 	Snippet string          `json:"snippet,omitempty"`
 }
 
@@ -420,30 +420,68 @@ func quoteTagQueryValue(value string) string {
 
 func withDefaultAND(text string) string {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || queryHasExplicitSyntax(trimmed) {
+	if trimmed == "" || queryHasBooleanOperator(trimmed) {
 		return trimmed
 	}
-	parts := strings.Fields(trimmed)
+	parts := queryStringTokens(trimmed)
 	for i, part := range parts {
-		if strings.HasPrefix(part, "+") || strings.HasPrefix(part, "-") {
-			continue
-		}
 		parts[i] = "+" + part
 	}
 	return strings.Join(parts, " ")
 }
 
 func queryHasExplicitSyntax(text string) bool {
-	if strings.ContainsAny(text, "\"():") || strings.Contains(text, "+") || strings.Contains(text, "-") {
-		return true
-	}
+	return strings.ContainsAny(text, "\"():") || queryHasBooleanOperator(text)
+}
+
+func queryHasBooleanOperator(text string) bool {
 	for _, part := range strings.Fields(text) {
-		switch strings.ToUpper(part) {
-		case "AND", "OR", "NOT":
+		upper := strings.ToUpper(part)
+		if upper == "AND" || upper == "OR" || upper == "NOT" {
+			return true
+		}
+		trimmed := strings.TrimLeft(part, "(")
+		if strings.HasPrefix(trimmed, "+") || strings.HasPrefix(trimmed, "-") {
 			return true
 		}
 	}
 	return false
+}
+
+func queryStringTokens(text string) []string {
+	var tokens []string
+	var b strings.Builder
+	inQuote := false
+	escaped := false
+	for _, r := range text {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			b.WriteRune(r)
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			b.WriteRune(r)
+			inQuote = !inQuote
+			continue
+		}
+		if !inQuote && (r == ' ' || r == '\t' || r == '\n' || r == '\r') {
+			if b.Len() > 0 {
+				tokens = append(tokens, b.String())
+				b.Reset()
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	if b.Len() > 0 {
+		tokens = append(tokens, b.String())
+	}
+	return tokens
 }
 
 func matchesFromLocations(locations blevesearch.FieldTermLocationMap, q Query) []string {

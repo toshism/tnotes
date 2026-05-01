@@ -46,6 +46,11 @@ func TestBleveSearch(t *testing.T) {
 			wantIDs: []string{"phrase"},
 		},
 		{
+			name:    "mixed phrase and word query uses AND semantics",
+			query:   Query{Text: `"lander policy" exact`, Limit: 0},
+			wantIDs: []string{"phrase"},
+		},
+		{
 			name:    "tag filter alone returns all matching notes",
 			query:   Query{Tags: []string{"project:space"}, Limit: 0},
 			wantIDs: []string{"landing", "policy", "phrase"},
@@ -245,5 +250,8 @@ func TestResultShapeKeepsEntry(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"entry"`) {
 		t.Fatalf("Result JSON missing entry: %s", data)
+	}
+	if strings.Contains(string(data), `"score"`) {
+		t.Fatalf("Result JSON should not include score: %s", data)
 	}
 }
