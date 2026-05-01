@@ -52,17 +52,10 @@ func (idx *Index) Save() error {
 
 // Rebuild scans the notes directory and rebuilds the index from scratch
 func Rebuild() (*Index, error) {
-	notesDir, err := filepath.Abs(config.NotesDir)
-	if err != nil {
-		return nil, err
-	}
-	notesDir, err = filepath.EvalSymlinks(notesDir)
-	if err != nil {
-		return nil, err
-	}
+	notesDir := config.ResolvedNotesDirFor(config.NotesDir)
 	idx := &Index{Entries: []note.IndexEntry{}}
 
-	err = filepath.Walk(notesDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(notesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip errors
 		}

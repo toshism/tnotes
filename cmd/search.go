@@ -10,7 +10,11 @@ import (
 	"github.com/toshism/tnotes/internal/search"
 )
 
-var searchTag string
+var (
+	searchTag     string
+	searchLimit   int
+	searchSnippet bool
+)
 
 var searchCmd = &cobra.Command{
 	Use:   "search [query]",
@@ -23,7 +27,7 @@ var searchCmd = &cobra.Command{
 		}
 
 		// Build query
-		q := search.Query{}
+		q := search.Query{Limit: searchLimit, Snippets: jsonOutput || searchSnippet}
 
 		if len(args) > 0 {
 			q.Text = args[0]
@@ -65,6 +69,9 @@ var searchCmd = &cobra.Command{
 				}
 				matches := strings.Join(r.Matches, ", ")
 				fmt.Printf("%-14s  %-40s  %s\n", r.Entry.ID, title, matches)
+				if searchSnippet && r.Snippet != "" {
+					fmt.Printf("%-14s  %s\n", "", r.Snippet)
+				}
 			}
 			fmt.Printf("\n%d result(s)\n", len(results))
 		}
@@ -76,4 +83,6 @@ var searchCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(searchCmd)
 	searchCmd.Flags().StringVar(&searchTag, "tag", "", "filter by tag (comma-separated for multiple)")
+	searchCmd.Flags().IntVar(&searchLimit, "limit", 20, "maximum number of results (0 means unlimited)")
+	searchCmd.Flags().BoolVar(&searchSnippet, "snippet", false, "show matching snippets in human-readable output")
 }
