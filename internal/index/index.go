@@ -56,6 +56,10 @@ func Rebuild() (*Index, error) {
 	if err != nil {
 		return nil, err
 	}
+	notesDir, err = filepath.EvalSymlinks(notesDir)
+	if err != nil {
+		return nil, err
+	}
 	idx := &Index{Entries: []note.IndexEntry{}}
 
 	err = filepath.Walk(notesDir, func(path string, info os.FileInfo, err error) error {

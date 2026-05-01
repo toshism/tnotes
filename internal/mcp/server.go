@@ -133,13 +133,17 @@ func (s *Server) handleRequest(req *Request) {
 	switch req.Method {
 	case "initialize":
 		s.handleInitialize(req)
-	case "initialized":
-		// No response needed
+	case "initialized", "notifications/initialized":
+		// Notification, no response
 	case "tools/list":
 		s.handleToolsList(req)
 	case "tools/call":
 		s.handleToolsCall(req)
 	default:
+		// Notifications (no id) must never receive a response per JSON-RPC spec.
+		if req.ID == nil {
+			return
+		}
 		s.sendError(req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))
 	}
 }
