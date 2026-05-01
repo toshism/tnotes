@@ -142,6 +142,23 @@ func IndexEntryAt(entry note.IndexEntry, indexPath string) error {
 	return b.Index(entry.ID, documentForEntry(entry))
 }
 
+// IndexEntryWithIndex upserts one entry into the configured bleve index,
+// rebuilding the full derived index first when it is missing.
+func IndexEntryWithIndex(idx *index.Index, entry note.IndexEntry) error {
+	return IndexEntryWithIndexAt(idx, entry, config.BleveIndexDir())
+}
+
+// IndexEntryWithIndexAt upserts one entry into a specific bleve index path,
+// rebuilding the full derived index first when it is missing. This is used by
+// add paths so the first command after upgrade does not create a partial bleve
+// index containing only the new note.
+func IndexEntryWithIndexAt(idx *index.Index, entry note.IndexEntry, indexPath string) error {
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		return RebuildBleveAt(idx, indexPath)
+	}
+	return IndexEntryAt(entry, indexPath)
+}
+
 func metadataOnlySearch(idx *index.Index, q Query) []Result {
 	results := make([]Result, 0, len(idx.Entries))
 	for _, entry := range idx.Entries {
@@ -345,9 +362,60 @@ func buildTextQuery(text string) blevequery.Query {
 }
 
 func normalizeQueryFields(text string) string {
-	text = strings.ReplaceAll(text, "tag:", "tags:")
-	text = strings.ReplaceAll(text, "TAG:", "tags:")
-	return text
+	return rewriteTagFieldAliases(text)
+}
+
+func rewriteTagFieldAliases(text string) string {
+	parts := strings.Fields(text)
+	for i, part := range parts {
+		parts[i] = rewriteTagFieldToken(part)
+	}
+	return strings.Join(parts, " ")
+}
+
+func rewriteTagFieldToken(token string) string {
+	if token == "" {
+		return token
+	}
+
+	prefixLen := 0
+	for prefixLen < len(token) && (token[prefixLen] == '+' || token[prefixLen] == '-' || token[prefixLen] == '(') {
+		prefixLen++
+	}
+	prefix := token[:prefixLen]
+	rest := token[prefixLen:]
+
+	lower := strings.ToLower(rest)
+	field := ""
+	switch {
+	case strings.HasPrefix(lower, "tag:"):
+		field = rest[:4]
+	case strings.HasPrefix(lower, "tags:"):
+		field = rest[:5]
+	default:
+		return token
+	}
+
+	value := rest[len(field):]
+	trailingParens := ""
+	for strings.HasSuffix(value, ")") && len(value) > 0 {
+		trailingParens = ")" + trailingParens
+		value = strings.TrimSuffix(value, ")")
+	}
+	if value == "" {
+		return token
+	}
+	return prefix + "tags:" + quoteTagQueryValue(strings.ToLower(value)) + trailingParens
+}
+
+func quoteTagQueryValue(value string) string {
+	if strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
+		return value
+	}
+	if strings.ContainsAny(value, ": ") {
+		return "\"" + strings.ReplaceAll(value, "\"", "\\\"") + "\""
+	}
+	return value
 }
 
 func withDefaultAND(text string) string {

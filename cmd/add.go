@@ -75,7 +75,7 @@ var addCmd = &cobra.Command{
 		if err := idx.Save(); err != nil {
 			return fmt.Errorf("failed to save index: %w", err)
 		}
-		if err := search.IndexEntry(n.ToIndexEntry()); err != nil {
+		if err := search.IndexEntryWithIndex(idx, n.ToIndexEntry()); err != nil {
 			return fmt.Errorf("failed to update search index: %w", err)
 		}
 

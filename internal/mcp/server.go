@@ -484,7 +484,7 @@ func (s *Server) toolAdd(notesDir, title, tags, content, links, projectParam str
 	if err := saveIndexTo(idx, indexFile); err != nil {
 		return fmt.Sprintf("Failed to save index: %v", err), true
 	}
-	if err := search.IndexEntryAt(n.ToIndexEntry(), config.BleveIndexDirFor(notesDir)); err != nil {
+	if err := search.IndexEntryWithIndexAt(idx, n.ToIndexEntry(), config.BleveIndexDirFor(notesDir)); err != nil {
 		return fmt.Sprintf("Failed to update search index: %v", err), true
 	}
 

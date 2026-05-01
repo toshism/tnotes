@@ -64,6 +64,11 @@ func TestBleveSearch(t *testing.T) {
 			query:   Query{Text: "tag:foo OR tag:bar", Limit: 0},
 			wantIDs: []string{"required", "excluded"},
 		},
+		{
+			name:    "negative tag alias with colon-containing value",
+			query:   Query{Text: "+lander -tag:project:other", Limit: 0},
+			wantIDs: []string{"landing", "policy", "phrase"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -73,7 +78,7 @@ func TestBleveSearch(t *testing.T) {
 				t.Fatal(err)
 			}
 			gotIDs := resultIDs(got)
-			if tt.name == "multi-word query uses word AND semantics" || tt.name == "single word hits stemmed variants" || tt.name == "boolean OR over tag field alias" {
+			if tt.name == "multi-word query uses word AND semantics" || tt.name == "single word hits stemmed variants" || tt.name == "boolean OR over tag field alias" || tt.name == "negative tag alias with colon-containing value" {
 				assertSameIDs(t, gotIDs, tt.wantIDs)
 				return
 			}
@@ -153,6 +158,28 @@ func TestIndexEntryUpdatesBleve(t *testing.T) {
 		t.Fatal(err)
 	}
 	if gotIDs := resultIDs(got); !reflect.DeepEqual(gotIDs, []string{"added"}) {
+		t.Fatalf("Search() IDs = %v", gotIDs)
+	}
+}
+
+func TestIndexEntryWithIndexBuildsFullCorpusWhenBleveMissing(t *testing.T) {
+	dir := t.TempDir()
+	indexPath := filepath.Join(dir, ".tnotes", "bleve")
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "existing", "Existing", nil, "old corpus needle"),
+	}}
+
+	entry := testEntry(t, dir, "added", "Added", nil, "fresh body")
+	idx.AddEntry(entry)
+	if err := IndexEntryWithIndexAt(idx, entry, indexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := SearchWithIndexPath(idx, Query{Text: "needle"}, indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotIDs := resultIDs(got); !reflect.DeepEqual(gotIDs, []string{"existing"}) {
 		t.Fatalf("Search() IDs = %v", gotIDs)
 	}
 }
