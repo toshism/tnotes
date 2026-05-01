@@ -267,8 +267,8 @@ func indexEntries(b bleve.Index, idx *index.Index) error {
 func documentForEntry(entry note.IndexEntry) bleveDocument {
 	return bleveDocument{
 		ID:       entry.ID,
-		Title:    entry.Title,
-		Content:  expandContentForSearch(readEntryContent(entry)),
+		Title:    expandTextForSearch(entry.Title),
+		Content:  expandTextForSearch(readEntryContent(entry)),
 		Tags:     lowerStrings(entry.Tags),
 		Created:  normalizeDate(entry.Created),
 		Modified: normalizeDate(entry.Modified),
@@ -290,9 +290,9 @@ func readEntryContent(entry note.IndexEntry) string {
 	return string(data)
 }
 
-func expandContentForSearch(content string) string {
+func expandTextForSearch(text string) string {
 	var extra []string
-	for _, word := range strings.FieldsFunc(content, func(r rune) bool {
+	for _, word := range strings.FieldsFunc(text, func(r rune) bool {
 		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
 	}) {
 		lower := strings.ToLower(word)
@@ -301,9 +301,9 @@ func expandContentForSearch(content string) string {
 		}
 	}
 	if len(extra) == 0 {
-		return content
+		return text
 	}
-	return content + "\n" + strings.Join(extra, " ")
+	return text + "\n" + strings.Join(extra, " ")
 }
 
 func normalizeDate(s string) string {

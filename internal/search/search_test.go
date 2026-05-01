@@ -90,6 +90,21 @@ func TestBleveSearch(t *testing.T) {
 	}
 }
 
+func TestTitleOnlyStemmedVariantMatches(t *testing.T) {
+	dir := t.TempDir()
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "title-only", "Lander", nil, "no matching body text"),
+	}}
+
+	got, err := SearchWithIndexPath(idx, Query{Text: "land"}, filepath.Join(dir, ".tnotes", "bleve"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotIDs := resultIDs(got); !reflect.DeepEqual(gotIDs, []string{"title-only"}) {
+		t.Fatalf("Search() IDs = %v", gotIDs)
+	}
+}
+
 func TestRankingTitleMatchFirst(t *testing.T) {
 	dir := t.TempDir()
 	idx := &index.Index{Entries: []note.IndexEntry{
