@@ -80,7 +80,7 @@ end
 local function note_entry(note)
   local title = note.title or note.id or "untitled"
   local snippet = clean_snippet(note._tnotes_snippet)
-  local display = title .. display_tags(note)
+  local display = (note.id or "") .. "  " .. title .. display_tags(note)
   if snippet ~= "" then
     display = display .. " — " .. snippet
   end

@@ -31,6 +31,9 @@ const (
 	codeTokenizerName  = "tnotes_code_tokenizer"
 	codeStopMapName    = "tnotes_stop_en_with_by"
 	codeStopFilterName = "tnotes_stop_en_with_by"
+	// Note IDs are YYYYMMDDHHMMSS; a digit term at least as long as the
+	// date part also matches IDs by prefix.
+	minNoteIDPrefixLen = 8
 )
 
 // Query represents search parameters
@@ -421,6 +424,18 @@ func isExactIdentifierQueryTerm(term string) bool {
 	return strings.ContainsAny(term, "_.:") || hasCamelCaseBoundary(term)
 }
 
+func isNoteIDPrefix(term string) bool {
+	if len(term) < minNoteIDPrefixLen {
+		return false
+	}
+	for _, r := range term {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func hasCamelCaseBoundary(s string) bool {
 	var prev rune
 	for i, r := range s {
@@ -495,7 +510,14 @@ func buildTextQuery(text string) blevequery.Query {
 		titleQuery.SetBoost(4)
 		contentQuery := bleve.NewMatchQuery(term)
 		contentQuery.SetField("content")
-		termQueries = append(termQueries, bleve.NewDisjunctionQuery(titleQuery, contentQuery))
+		fieldQueries := []blevequery.Query{titleQuery, contentQuery}
+		if isNoteIDPrefix(term) {
+			idQuery := bleve.NewPrefixQuery(term)
+			idQuery.SetField("id")
+			idQuery.SetBoost(10)
+			fieldQueries = append(fieldQueries, idQuery)
+		}
+		termQueries = append(termQueries, bleve.NewDisjunctionQuery(fieldQueries...))
 	}
 	if len(termQueries) == 1 {
 		return termQueries[0]

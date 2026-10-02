@@ -176,6 +176,45 @@ func TestRankingTitleMatchFirst(t *testing.T) {
 	}
 }
 
+func TestNoteIDQuery(t *testing.T) {
+	dir := t.TempDir()
+	idx := &index.Index{Entries: []note.IndexEntry{
+		testEntry(t, dir, "20260411002302", "In-flight tracker", nil, "board body"),
+		testEntry(t, dir, "20260411093000", "Same day note", nil, "unrelated body"),
+		testEntry(t, dir, "20260412080000", "Next day note", nil, "unrelated body"),
+		testEntry(t, dir, "20260916030403", "Follow-up to 20260411002302", nil, strings.Repeat("see 20260411002302 ", 10)),
+	}}
+	indexPath := filepath.Join(dir, ".tnotes", "bleve")
+
+	search := func(text string) []string {
+		t.Helper()
+		got, err := SearchWithIndexPath(idx, Query{Text: text, Limit: 0}, indexPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resultIDs(got)
+	}
+
+	t.Run("full ID ranks the note itself above notes that mention it", func(t *testing.T) {
+		want := []string{"20260411002302", "20260916030403"}
+		if got := search("20260411002302"); !reflect.DeepEqual(got, want) {
+			t.Fatalf("Search() IDs = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("date prefix matches notes created that day", func(t *testing.T) {
+		assertSameIDs(t, search("20260411"), []string{"20260411002302", "20260411093000"})
+	})
+
+	t.Run("date prefix combines with other words", func(t *testing.T) {
+		assertSameIDs(t, search("20260411 tracker"), []string{"20260411002302"})
+	})
+
+	t.Run("prefix shorter than a date does not match IDs", func(t *testing.T) {
+		assertSameIDs(t, search("2026041"), nil)
+	})
+}
+
 func TestSnippets(t *testing.T) {
 	dir := t.TempDir()
 	idx := &index.Index{Entries: []note.IndexEntry{
