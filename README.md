@@ -3,7 +3,7 @@
 AI-native note-taking for plain Markdown files.
 
 `tnotes` is a small Go CLI with an MCP server and a Neovim/Telescope plugin.
-Notes live as regular `.md` files with YAML frontmatter, while `.tnotes/` stores the derived search indexes.
+Notes live as regular `.md` files with YAML frontmatter. The derived search indexes live in a per-machine cache, outside the notes directory.
 
 ## Features
 
@@ -66,7 +66,7 @@ tnotes search --project toshism/tnotes "index rebuild"
 # show a note by ID
 tnotes show 20260219143022
 
-# rebuild indexes after manual edits
+# force a full rebuild of the indexes
 tnotes index
 ```
 
@@ -88,11 +88,20 @@ Example config:
 notes_dir = "~/notes/tnotes"
 ```
 
-Each notes directory contains:
+The notes directory holds only your `*.md` note files. The indexes for it live in
+`$XDG_CACHE_HOME/tnotes/<notes-dir-path>/` (default `~/.cache/tnotes/`):
 
-- your `*.md` note files
-- `.tnotes/index.json` metadata index
-- `.tnotes/bleve/` full-text search index
+- `index.json` metadata index
+- `bleve/` full-text search index
+
+The indexes hold absolute paths, so each machine keeps its own. This lets you sync the notes
+directory (for example with Syncthing) to machines that mount it at different paths. `search`,
+`list` and `show` check the notes on disk before reading, and update the indexes for any note
+that was added, changed or deleted, including notes edited outside `tnotes`. A full rebuild
+(`tnotes index`) is only needed if the cache gets into a bad state.
+
+Older versions kept the indexes in a `.tnotes/` folder inside the notes directory. Current
+versions ignore it. Once every machine runs a current version, you can delete it.
 
 ## Project tagging
 

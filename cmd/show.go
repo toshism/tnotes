@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/toshism/tnotes/internal/config"
-	"github.com/toshism/tnotes/internal/index"
 	"github.com/toshism/tnotes/internal/note"
+	"github.com/toshism/tnotes/internal/search"
 )
 
 var showCmd = &cobra.Command{
@@ -20,7 +20,7 @@ var showCmd = &cobra.Command{
 		id := args[0]
 
 		// First try to find in index for quick path lookup
-		idx, _ := index.Load()
+		idx, _ := search.LoadFresh(config.NotesDir)
 		var filePath string
 
 		if idx != nil {

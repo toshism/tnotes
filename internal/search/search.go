@@ -129,6 +129,60 @@ func SearchWithIndexPath(idx *index.Index, q Query, indexPath string) ([]Result,
 	return results, nil
 }
 
+// LoadFresh loads the index for notesDir and brings it, and the bleve index,
+// up to date with the note files on disk. It writes nothing when no note
+// changed.
+func LoadFresh(notesDir string) (*index.Index, error) {
+	idx, err := index.LoadFor(notesDir)
+	if err != nil {
+		return nil, err
+	}
+	update, err := index.Refresh(idx, notesDir)
+	if err != nil {
+		return nil, err
+	}
+	if update.Empty() {
+		return idx, nil
+	}
+	// Update bleve before index.json: if saving fails, the next refresh sees
+	// the same changes and applies them again.
+	if err := ApplyUpdateAt(update, config.BleveIndexDirFor(notesDir)); err != nil {
+		return nil, err
+	}
+	if err := idx.SaveFor(notesDir); err != nil {
+		return nil, err
+	}
+	return idx, nil
+}
+
+// ApplyUpdateAt applies an index refresh to the bleve index at indexPath. A
+// missing bleve index is left for the next search to build in full.
+func ApplyUpdateAt(update index.Update, indexPath string) error {
+	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+		return nil
+	}
+	b, err := openOrCreateBleveIndex(indexPath)
+	if err != nil {
+		return err
+	}
+	defer b.Close()
+
+	batch := b.NewBatch()
+	for _, id := range update.Removed {
+		batch.Delete(id)
+	}
+	for _, entry := range update.Upserted {
+		// A note without frontmatter has no ID and cannot be a bleve document.
+		if entry.ID == "" {
+			continue
+		}
+		if err := batch.Index(entry.ID, documentForEntry(entry)); err != nil {
+			return err
+		}
+	}
+	return b.Batch(batch)
+}
+
 // RebuildBleve removes and recreates the bleve index from index.json entries.
 func RebuildBleve(idx *index.Index) error {
 	return RebuildBleveAt(idx, config.BleveIndexDir())

@@ -56,7 +56,7 @@ var addCmd = &cobra.Command{
 		// Create new note
 		n := note.NewNote(title, tags)
 		filename := n.Filename()
-		filePath := filepath.Join(config.NotesDir, filename)
+		filePath := filepath.Join(config.ResolvedNotesDirFor(config.NotesDir), filename)
 
 		// Write note file
 		content := n.ToMarkdown("")

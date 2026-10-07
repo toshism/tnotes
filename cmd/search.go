@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/toshism/tnotes/internal/index"
+	"github.com/toshism/tnotes/internal/config"
 	"github.com/toshism/tnotes/internal/search"
 )
 
@@ -22,7 +22,7 @@ var searchCmd = &cobra.Command{
 	Short: "Search notes",
 	Long:  `Searches notes by text (title + content) and/or tags.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		idx, err := index.Load()
+		idx, err := search.LoadFresh(config.NotesDir)
 		if err != nil {
 			return fmt.Errorf("failed to load index: %w", err)
 		}

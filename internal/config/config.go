@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -74,9 +75,21 @@ func ResolvedNotesDirFor(notesDir string) string {
 	return resolved
 }
 
-// IndexDirFor returns the path to the .tnotes directory for a notes directory.
+// IndexDirFor returns the machine-local index directory for a notes directory.
+// The index holds absolute paths, so it lives in the user cache dir rather
+// than in the notes directory, which may be synced to machines that mount it
+// somewhere else.
 func IndexDirFor(notesDir string) string {
-	return filepath.Join(notesDir, ".tnotes")
+	resolved := ResolvedNotesDirFor(notesDir)
+	key := strings.ReplaceAll(strings.Trim(resolved, string(filepath.Separator)), string(filepath.Separator), "-")
+	return filepath.Join(cacheDir(), "tnotes", key)
+}
+
+func cacheDir() string {
+	if dir, err := os.UserCacheDir(); err == nil {
+		return dir
+	}
+	return os.TempDir()
 }
 
 // IndexFileFor returns the path to the index.json file for a notes directory.
@@ -89,7 +102,7 @@ func BleveIndexDirFor(notesDir string) string {
 	return filepath.Join(IndexDirFor(notesDir), "bleve")
 }
 
-// IndexDir returns the path to the .tnotes directory
+// IndexDir returns the index directory for the configured notes directory.
 func IndexDir() string {
 	return IndexDirFor(NotesDir)
 }

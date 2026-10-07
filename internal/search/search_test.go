@@ -7,7 +7,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/toshism/tnotes/internal/config"
 	"github.com/toshism/tnotes/internal/index"
 	"github.com/toshism/tnotes/internal/note"
 )
@@ -291,6 +293,153 @@ func TestIndexEntryWithIndexBuildsFullCorpusWhenBleveMissing(t *testing.T) {
 	}
 	if gotIDs := resultIDs(got); !reflect.DeepEqual(gotIDs, []string{"existing"}) {
 		t.Fatalf("Search() IDs = %v", gotIDs)
+	}
+}
+
+func TestLoadFreshFindsNotesAddedEditedAndDeletedOnDisk(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	dir := t.TempDir()
+	testEntry(t, dir, "a", "A", nil, "alpha body")
+	testEntry(t, dir, "b", "B", nil, "bravo body")
+	assertFreshSearch(t, dir, "alpha", "a")
+
+	testEntry(t, dir, "a", "A", nil, "zulu body, edited")
+	testEntry(t, dir, "c", "C", nil, "charlie body")
+	if err := os.Remove(filepath.Join(dir, "b.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFreshSearch(t, dir, "zulu", "a")
+	assertFreshSearch(t, dir, "alpha")
+	assertFreshSearch(t, dir, "charlie", "c")
+	assertFreshSearch(t, dir, "bravo")
+}
+
+func TestLoadFreshDoesNotRewriteUnchangedIndex(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	dir := t.TempDir()
+	testEntry(t, dir, "a", "A", nil, "alpha body")
+	if _, err := LoadFresh(dir); err != nil {
+		t.Fatal(err)
+	}
+	indexFile := config.IndexFileFor(dir)
+	past := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(indexFile, past, past); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadFresh(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(indexFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(past) {
+		t.Fatalf("index.json rewritten at %v with no note changes", info.ModTime())
+	}
+}
+
+func TestLoadFreshToleratesNoteWithoutFrontmatter(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	dir := t.TempDir()
+	testEntry(t, dir, "a", "A", nil, "alpha body")
+	assertFreshSearch(t, dir, "alpha", "a")
+
+	if err := os.WriteFile(filepath.Join(dir, "plain.md"), []byte("no frontmatter here\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFreshSearch(t, dir, "alpha", "a")
+}
+
+// One synced notes folder, mounted at a different path on each machine.
+func TestLoadFreshReturnsPathsUnderEachMachinesMount(t *testing.T) {
+	mountA := t.TempDir()
+	mountB := t.TempDir()
+	cacheA := t.TempDir()
+	cacheB := t.TempDir()
+
+	t.Setenv("XDG_CACHE_HOME", cacheA)
+	testEntry(t, mountA, "a", "A", nil, "alpha body")
+	assertFreshSearch(t, mountA, "alpha", "a")
+	syncFolder(t, mountA, mountB)
+
+	t.Setenv("XDG_CACHE_HOME", cacheB)
+	assertFreshSearchPaths(t, mountB, "alpha", filepath.Join(mountB, "a.md"))
+
+	t.Setenv("XDG_CACHE_HOME", cacheA)
+	testEntry(t, mountA, "b", "B", nil, "bravo body")
+	assertFreshSearch(t, mountA, "bravo", "b")
+	syncFolder(t, mountA, mountB)
+
+	t.Setenv("XDG_CACHE_HOME", cacheB)
+	assertFreshSearchPaths(t, mountB, "bravo", filepath.Join(mountB, "b.md"))
+}
+
+// syncFolder copies every file from src to dst with its modification time, as
+// Syncthing does.
+func syncFolder(t *testing.T, src, dst string) {
+	t.Helper()
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(src, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(dst, e.Name())
+		if err := os.WriteFile(target, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(target, info.ModTime(), info.ModTime()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func freshSearch(t *testing.T, notesDir, text string) []Result {
+	t.Helper()
+	idx, err := LoadFresh(notesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := SearchWithIndexPath(idx, Query{Text: text}, config.BleveIndexDirFor(notesDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func assertFreshSearch(t *testing.T, notesDir, text string, wantIDs ...string) {
+	t.Helper()
+	gotIDs := resultIDs(freshSearch(t, notesDir, text))
+	if len(gotIDs) == 0 && len(wantIDs) == 0 {
+		return
+	}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("search %q IDs = %v, want %v", text, gotIDs, wantIDs)
+	}
+}
+
+func assertFreshSearchPaths(t *testing.T, notesDir, text string, wantPaths ...string) {
+	t.Helper()
+	var gotPaths []string
+	for _, r := range freshSearch(t, notesDir, text) {
+		gotPaths = append(gotPaths, r.Entry.Path)
+	}
+	if !reflect.DeepEqual(gotPaths, wantPaths) {
+		t.Fatalf("search %q paths = %v, want %v", text, gotPaths, wantPaths)
 	}
 }
 

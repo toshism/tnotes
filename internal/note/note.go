@@ -31,7 +31,8 @@ type IndexEntry struct {
 	Created  string   `json:"created"`
 	Modified string   `json:"modified"`
 	Path     string   `json:"path"`
-	ModTime  int64    `json:"mod_time"` // Unix timestamp for cache invalidation
+	ModTime  int64    `json:"mod_time"` // Unix nanoseconds, for cache invalidation
+	Size     int64    `json:"size"`     // Bytes, for cache invalidation
 }
 
 // GenerateID creates a new timestamp-based ID
@@ -161,9 +162,11 @@ func ParseFile(path string) (*Note, string, error) {
 // ToIndexEntry converts a Note to an IndexEntry
 func (n *Note) ToIndexEntry() IndexEntry {
 	modTime := int64(0)
+	size := int64(0)
 	if n.Path != "" {
 		if info, err := os.Stat(n.Path); err == nil {
-			modTime = info.ModTime().Unix()
+			modTime = info.ModTime().UnixNano()
+			size = info.Size()
 		}
 	}
 
@@ -176,6 +179,7 @@ func (n *Note) ToIndexEntry() IndexEntry {
 		Modified: n.Modified,
 		Path:     n.Path,
 		ModTime:  modTime,
+		Size:     size,
 	}
 }
 

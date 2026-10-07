@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/toshism/tnotes/internal/config"
 	"github.com/toshism/tnotes/internal/index"
@@ -300,10 +299,7 @@ func (s *Server) toolInit(notesDir string) (string, bool) {
 		return fmt.Sprintf("Failed to resolve path: %v", err), true
 	}
 
-	tnotesDir := filepath.Join(absDir, ".tnotes")
-	indexFile := filepath.Join(tnotesDir, "index.json")
-
-	if _, err := os.Stat(indexFile); err == nil {
+	if _, err := os.Stat(absDir); err == nil {
 		out := map[string]interface{}{
 			"status":  "already_initialized",
 			"path":    absDir,
@@ -313,13 +309,8 @@ func (s *Server) toolInit(notesDir string) (string, bool) {
 		return string(data), false
 	}
 
-	if err := os.MkdirAll(tnotesDir, 0755); err != nil {
+	if err := os.MkdirAll(absDir, 0755); err != nil {
 		return fmt.Sprintf("Failed to create directory: %v", err), true
-	}
-
-	emptyIndex := &index.Index{Entries: []note.IndexEntry{}}
-	if err := saveIndexTo(emptyIndex, indexFile); err != nil {
-		return fmt.Sprintf("Failed to create index: %v", err), true
 	}
 
 	out := map[string]interface{}{
@@ -332,8 +323,7 @@ func (s *Server) toolInit(notesDir string) (string, bool) {
 }
 
 func (s *Server) toolList(notesDir, projectFilter string) (string, bool) {
-	indexFile := config.IndexFileFor(notesDir)
-	idx, err := loadIndexFrom(indexFile)
+	idx, err := search.LoadFresh(notesDir)
 	if err != nil {
 		return fmt.Sprintf("Failed to load index: %v", err), true
 	}
@@ -358,8 +348,7 @@ func (s *Server) toolList(notesDir, projectFilter string) (string, bool) {
 }
 
 func (s *Server) toolSearch(notesDir, query, tag, projectFilter string, limit int) (string, bool) {
-	indexFile := config.IndexFileFor(notesDir)
-	idx, err := loadIndexFrom(indexFile)
+	idx, err := search.LoadFresh(notesDir)
 	if err != nil {
 		return fmt.Sprintf("Failed to load index: %v", err), true
 	}
@@ -386,8 +375,7 @@ func (s *Server) toolShow(notesDir, id string) (string, bool) {
 		return "ID is required", true
 	}
 
-	indexFile := config.IndexFileFor(notesDir)
-	idx, _ := loadIndexFrom(indexFile)
+	idx, _ := search.LoadFresh(notesDir)
 	var filePath string
 
 	if idx != nil {
@@ -465,8 +453,7 @@ func (s *Server) toolAdd(notesDir, title, tags, content, links, projectParam str
 	}
 
 	filename := n.Filename()
-	absDir, _ := filepath.Abs(notesDir)
-	filePath := filepath.Join(absDir, filename)
+	filePath := filepath.Join(config.ResolvedNotesDirFor(notesDir), filename)
 
 	noteContent := n.ToMarkdown(content)
 	if err := os.WriteFile(filePath, []byte(noteContent), 0644); err != nil {
@@ -474,14 +461,13 @@ func (s *Server) toolAdd(notesDir, title, tags, content, links, projectParam str
 	}
 
 	n.Path = filePath
-	indexFile := config.IndexFileFor(notesDir)
-	idx, err := loadIndexFrom(indexFile)
+	idx, err := index.LoadFor(notesDir)
 	if err != nil {
 		idx = &index.Index{Entries: []note.IndexEntry{}}
 	}
 
 	idx.AddEntry(n.ToIndexEntry())
-	if err := saveIndexTo(idx, indexFile); err != nil {
+	if err := idx.SaveFor(notesDir); err != nil {
 		return fmt.Sprintf("Failed to save index: %v", err), true
 	}
 	if err := search.IndexEntryWithIndexAt(idx, n.ToIndexEntry(), config.BleveIndexDirFor(notesDir)); err != nil {
@@ -502,13 +488,12 @@ func (s *Server) toolAdd(notesDir, title, tags, content, links, projectParam str
 }
 
 func (s *Server) toolIndex(notesDir string) (string, bool) {
-	idx, err := rebuildIndexFor(notesDir)
+	idx, err := index.RebuildFor(notesDir)
 	if err != nil {
 		return fmt.Sprintf("Failed to rebuild index: %v", err), true
 	}
 
-	indexFile := config.IndexFileFor(notesDir)
-	if err := saveIndexTo(idx, indexFile); err != nil {
+	if err := idx.SaveFor(notesDir); err != nil {
 		return fmt.Sprintf("Failed to save index: %v", err), true
 	}
 	if err := search.RebuildBleveAt(idx, config.BleveIndexDirFor(notesDir)); err != nil {
@@ -522,71 +507,6 @@ func (s *Server) toolIndex(notesDir string) (string, bool) {
 
 	data, _ := json.MarshalIndent(out, "", "  ")
 	return string(data), false
-}
-
-// loadIndexFrom loads an index from a specific file path
-func loadIndexFrom(indexFile string) (*index.Index, error) {
-	data, err := os.ReadFile(indexFile)
-	if err != nil {
-		return nil, err
-	}
-
-	var idx index.Index
-	if err := json.Unmarshal(data, &idx); err != nil {
-		return nil, err
-	}
-
-	return &idx, nil
-}
-
-// saveIndexTo saves an index to a specific file path
-func saveIndexTo(idx *index.Index, indexFile string) error {
-	indexDir := filepath.Dir(indexFile)
-	if err := os.MkdirAll(indexDir, 0755); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(idx, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(indexFile, data, 0644)
-}
-
-// rebuildIndexFor rebuilds the index for a specific notes directory
-func rebuildIndexFor(notesDir string) (*index.Index, error) {
-	absDir := config.ResolvedNotesDirFor(notesDir)
-
-	idx := &index.Index{Entries: []note.IndexEntry{}}
-
-	err := filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		if info.IsDir() && info.Name() == ".tnotes" {
-			return filepath.SkipDir
-		}
-
-		if info.IsDir() || !strings.HasSuffix(path, ".md") {
-			return nil
-		}
-
-		n, _, err := note.ParseFile(path)
-		if err != nil {
-			return nil
-		}
-
-		idx.Entries = append(idx.Entries, n.ToIndexEntry())
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return idx, nil
 }
 
 func (s *Server) sendResult(id interface{}, result interface{}) {

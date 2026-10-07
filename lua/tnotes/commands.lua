@@ -89,29 +89,6 @@ function M.refresh()
   end
 end
 
--- Check if a file path is inside the tnotes directory
-local function is_tnotes_file(filepath)
-  local home = vim.fn.expand("~")
-  if filepath:match("^" .. vim.pesc(home) .. "/tnotes/") then
-    return true
-  end
-  return false
-end
-
--- Setup auto-refresh on save
-local function setup_auto_refresh()
-  vim.api.nvim_create_autocmd("BufWritePost", {
-    pattern = "*.md",
-    callback = function(ev)
-      local filepath = vim.api.nvim_buf_get_name(ev.buf)
-      if is_tnotes_file(filepath) then
-        -- Run index silently in background
-        cli.index()
-      end
-    end,
-  })
-end
-
 -- Register all commands
 function M.setup()
   vim.api.nvim_create_user_command("TnotesNew", function(opts)
@@ -119,9 +96,6 @@ function M.setup()
   end, { nargs = "?" })
 
   vim.api.nvim_create_user_command("TnotesRefresh", M.refresh, {})
-
-  -- Setup auto-refresh
-  setup_auto_refresh()
 end
 
 return M
