@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,13 @@ var (
 	NotesDir string
 )
 
-func Init(cfgFile, notesDir string) {
+// Init loads the config. It fails when there is no user cache dir to hold
+// the index.
+func Init(cfgFile, notesDir string) error {
+	if _, err := os.UserCacheDir(); err != nil {
+		return fmt.Errorf("no cache directory for the index: %w", err)
+	}
+
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
@@ -41,6 +48,7 @@ func Init(cfgFile, notesDir string) {
 	}
 
 	NotesDir = expandPath(NotesDir)
+	return nil
 }
 
 func defaultNotesDir() string {
@@ -78,18 +86,16 @@ func ResolvedNotesDirFor(notesDir string) string {
 // IndexDirFor returns the machine-local index directory for a notes directory.
 // The index holds absolute paths, so it lives in the user cache dir rather
 // than in the notes directory, which may be synced to machines that mount it
-// somewhere else.
+// somewhere else. Init fails when there is no user cache dir, so commands
+// never reach the panic.
 func IndexDirFor(notesDir string) string {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		panic(err)
+	}
 	resolved := ResolvedNotesDirFor(notesDir)
 	key := strings.ReplaceAll(strings.Trim(resolved, string(filepath.Separator)), string(filepath.Separator), "-")
-	return filepath.Join(cacheDir(), "tnotes", key)
-}
-
-func cacheDir() string {
-	if dir, err := os.UserCacheDir(); err == nil {
-		return dir
-	}
-	return os.TempDir()
+	return filepath.Join(cache, "tnotes", key)
 }
 
 // IndexFileFor returns the path to the index.json file for a notes directory.

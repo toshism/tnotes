@@ -40,5 +40,8 @@ func init() {
 }
 
 func initConfig() {
-	config.Init(cfgFile, notesDir)
+	if err := config.Init(cfgFile, notesDir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

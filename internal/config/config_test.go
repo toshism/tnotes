@@ -19,7 +19,9 @@ func TestDefaultNotesDirIsTnotes(t *testing.T) {
 func TestInitWithEnvVar(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TNOTES_DIR", dir)
-	Init("", "")
+	if err := Init("", ""); err != nil {
+		t.Fatal(err)
+	}
 	if NotesDir != dir {
 		t.Errorf("expected %s, got %s", dir, NotesDir)
 	}
@@ -27,7 +29,9 @@ func TestInitWithEnvVar(t *testing.T) {
 
 func TestInitWithExplicitDir(t *testing.T) {
 	dir := t.TempDir()
-	Init("", dir)
+	if err := Init("", dir); err != nil {
+		t.Fatal(err)
+	}
 	if NotesDir != dir {
 		t.Errorf("expected %s, got %s", dir, NotesDir)
 	}
@@ -65,5 +69,14 @@ func TestIndexDirDiffersPerNotesDir(t *testing.T) {
 
 	if a, b := IndexDirFor(t.TempDir()), IndexDirFor(t.TempDir()); a == b {
 		t.Errorf("two notes dirs share index dir %s", a)
+	}
+}
+
+func TestInitFailsWithoutCacheDir(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("HOME", "")
+
+	if err := Init("", t.TempDir()); err == nil {
+		t.Fatal("Init() with no $XDG_CACHE_HOME or $HOME returned no error")
 	}
 }
